@@ -1,0 +1,11 @@
+chromadb>=1.5,<2
+numpy>=2.0
+pandas>=2.2
+plotly>=6.0
+pytest>=8.0
+python-dotenv>=1.0
+scikit-learn>=1.5
+sentence-transformers>=3.0
+snowflake-connector-python>=3.10
+streamlit>=1.36
+umap-learn>=0.5
