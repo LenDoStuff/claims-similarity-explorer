@@ -1,24 +1,38 @@
 from __future__ import annotations
 
-import os
 import re
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODELS_DIR = PROJECT_ROOT / "models"
 DEFAULT_EMBEDDING_MODELS_DIR = DEFAULT_MODELS_DIR / "embeddings"
 DEFAULT_RERANKER_MODELS_DIR = DEFAULT_MODELS_DIR / "rerankers"
-DEFAULT_MODEL_DIR = DEFAULT_EMBEDDING_MODELS_DIR / "multilingual-e5-small"
 DEFAULT_CHROMA_DIR = PROJECT_ROOT / "chroma_db"
 DEFAULT_ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+DEFAULT_APP_CONFIG_PATH = PROJECT_ROOT / "app_config.toml"
 DEFAULT_COLLECTION_NAME = "claims"
 DEFAULT_MODEL_KEY = "multilingual-e5-small"
-DEFAULT_EMBEDDING_MODEL_NAME = DEFAULT_MODEL_KEY
 DEFAULT_EMBEDDING_VERSION = "e5-v1"
-DEFAULT_RERANKER_MODEL_NAME = "mmarco-mMiniLMv2-L12-H384-v1"
-DEFAULT_RERANKER_MODEL_DIR = DEFAULT_RERANKER_MODELS_DIR / DEFAULT_RERANKER_MODEL_NAME
+
+COLUMN_MAPPING_FIELDS = [
+    ("Claim ID", "claim_id", "claim_id", True),
+    ("Claim description", "description", "description", True),
+    ("Line of business", "line_of_business", "line_of_business", False),
+    ("Claim type", "claim_type", "claim_type", False),
+    ("Cause of loss", "cause_of_loss", "cause_of_loss", False),
+    ("Damaged object", "damaged_object", "damaged_object", False),
+    ("Country", "country", "country", False),
+    ("Claim status", "claim_status", "claim_status", False),
+    ("Loss date", "loss_date", "loss_date", False),
+    ("Reserve amount", "reserve_amount", "reserve_amount", False),
+    ("Paid amount", "paid_amount", "paid_amount", False),
+    ("Currency", "currency", "currency", False),
+    ("Policy type", "policy_type", "policy_type", False),
+]
 
 
 @dataclass(frozen=True)
@@ -55,34 +69,24 @@ class ColumnConfig:
     policy_type: str = "policy_type"
 
     @classmethod
-    def from_env(cls) -> "ColumnConfig":
+    def from_mapping(cls, values: dict[str, Any]) -> "ColumnConfig":
+        defaults = cls()
         return cls(
-            claim_id=env_column("CLAIM_ID_COLUMN", cls.claim_id),
-            description=env_column("CLAIM_DESCRIPTION_COLUMN", cls.description),
-            line_of_business=env_column("LINE_OF_BUSINESS_COLUMN", cls.line_of_business),
-            claim_type=env_column("CLAIM_TYPE_COLUMN", cls.claim_type),
-            cause_of_loss=env_column("CAUSE_OF_LOSS_COLUMN", cls.cause_of_loss),
-            damaged_object=env_column("DAMAGED_OBJECT_COLUMN", cls.damaged_object),
-            country=env_column("COUNTRY_COLUMN", cls.country),
-            claim_status=env_column("CLAIM_STATUS_COLUMN", cls.claim_status),
-            loss_date=env_column("LOSS_DATE_COLUMN", cls.loss_date),
-            reserve_amount=env_column("RESERVE_AMOUNT_COLUMN", cls.reserve_amount),
-            paid_amount=env_column("PAID_AMOUNT_COLUMN", cls.paid_amount),
-            currency=env_column("CURRENCY_COLUMN", cls.currency),
-            policy_type=env_column("POLICY_TYPE_COLUMN", cls.policy_type),
+            **{
+                attr: str(values.get(config_key, getattr(defaults, attr))).strip()
+                for _, config_key, attr, _ in COLUMN_MAPPING_FIELDS
+            }
         )
 
     def validate_required(self) -> None:
         missing = [
-            env_name
-            for attr, env_name in [
-                ("claim_id", "CLAIM_ID_COLUMN"),
-                ("description", "CLAIM_DESCRIPTION_COLUMN"),
-            ]
+            config_key
+            for _, config_key, attr, required in COLUMN_MAPPING_FIELDS
+            if required
             if not getattr(self, attr)
         ]
         if missing:
-            raise ValueError(f"Required column mapping(s) cannot be blank: {', '.join(missing)}")
+            raise ValueError(f"Required column mapping(s) cannot be blank: {', '.join(f'columns.{key}' for key in missing)}")
 
     @property
     def selected_columns(self) -> list[str]:
@@ -118,26 +122,12 @@ class ColumnConfig:
 
     def mapping_rows(self) -> list[dict[str, str]]:
         rows = []
-        for label, env_name, attr, required in [
-            ("Claim ID", "CLAIM_ID_COLUMN", "claim_id", True),
-            ("Claim description", "CLAIM_DESCRIPTION_COLUMN", "description", True),
-            ("Line of business", "LINE_OF_BUSINESS_COLUMN", "line_of_business", False),
-            ("Claim type", "CLAIM_TYPE_COLUMN", "claim_type", False),
-            ("Cause of loss", "CAUSE_OF_LOSS_COLUMN", "cause_of_loss", False),
-            ("Damaged object", "DAMAGED_OBJECT_COLUMN", "damaged_object", False),
-            ("Country", "COUNTRY_COLUMN", "country", False),
-            ("Claim status", "CLAIM_STATUS_COLUMN", "claim_status", False),
-            ("Loss date", "LOSS_DATE_COLUMN", "loss_date", False),
-            ("Reserve amount", "RESERVE_AMOUNT_COLUMN", "reserve_amount", False),
-            ("Paid amount", "PAID_AMOUNT_COLUMN", "paid_amount", False),
-            ("Currency", "CURRENCY_COLUMN", "currency", False),
-            ("Policy type", "POLICY_TYPE_COLUMN", "policy_type", False),
-        ]:
+        for label, config_key, attr, required in COLUMN_MAPPING_FIELDS:
             source_column = getattr(self, attr)
             rows.append(
                 {
                     "role": label,
-                    "env_var": env_name,
+                    "config_key": f"columns.{config_key}",
                     "source_column": source_column or "(skipped)",
                     "required": "yes" if required else "no",
                 }
@@ -145,85 +135,40 @@ class ColumnConfig:
         return rows
 
 
-def env_column(env_name: str, default: str) -> str:
-    value = os.getenv(env_name)
-    return default if value is None else value.strip()
-
-
-@dataclass(frozen=True)
-class SnowflakeConfig:
-    account: str
-    user: str
-    password: str
-    warehouse: str
-    database: str
-    schema: str
-    table: str
-    role: str | None = None
-
-    @classmethod
-    def from_env(cls) -> "SnowflakeConfig":
-        required = {
-            "SNOWFLAKE_ACCOUNT": os.getenv("SNOWFLAKE_ACCOUNT"),
-            "SNOWFLAKE_USER": os.getenv("SNOWFLAKE_USER"),
-            "SNOWFLAKE_PASSWORD": os.getenv("SNOWFLAKE_PASSWORD"),
-            "SNOWFLAKE_WAREHOUSE": os.getenv("SNOWFLAKE_WAREHOUSE"),
-            "SNOWFLAKE_DATABASE": os.getenv("SNOWFLAKE_DATABASE"),
-            "SNOWFLAKE_SCHEMA": os.getenv("SNOWFLAKE_SCHEMA"),
-            "SNOWFLAKE_TABLE": os.getenv("SNOWFLAKE_TABLE"),
-        }
-        missing = [name for name, value in required.items() if not value]
-        if missing:
-            joined = ", ".join(missing)
-            raise RuntimeError(f"Missing required Snowflake environment variable(s): {joined}")
-
-        return cls(
-            account=required["SNOWFLAKE_ACCOUNT"] or "",
-            user=required["SNOWFLAKE_USER"] or "",
-            password=required["SNOWFLAKE_PASSWORD"] or "",
-            warehouse=required["SNOWFLAKE_WAREHOUSE"] or "",
-            database=required["SNOWFLAKE_DATABASE"] or "",
-            schema=required["SNOWFLAKE_SCHEMA"] or "",
-            table=required["SNOWFLAKE_TABLE"] or "",
-            role=os.getenv("SNOWFLAKE_ROLE") or None,
-        )
-
-    @property
-    def qualified_table(self) -> str:
-        return ".".join(quote_identifier(part) for part in [self.database, self.schema, self.table])
-
-
 @dataclass(frozen=True)
 class AppConfig:
+    snowflake_table: str = ""
+    snowflake_row_limit: int | None = None
     model_key: str = DEFAULT_MODEL_KEY
-    columns: ColumnConfig = field(default_factory=ColumnConfig.from_env)
-    model_dir: Path = DEFAULT_MODEL_DIR
+    columns: ColumnConfig = field(default_factory=ColumnConfig)
     chroma_dir: Path = DEFAULT_CHROMA_DIR
     artifacts_dir: Path = DEFAULT_ARTIFACTS_DIR
     collection_name: str = DEFAULT_COLLECTION_NAME
-    embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME
     embedding_version: str = DEFAULT_EMBEDDING_VERSION
 
     @classmethod
-    def from_env(cls) -> "AppConfig":
-        model_key = os.getenv("EMBEDDING_MODEL_KEY")
-        model = get_embedding_model(model_key) if model_key else get_default_embedding_model()
+    def from_app_config(cls) -> "AppConfig":
+        if not DEFAULT_APP_CONFIG_PATH.exists():
+            raise RuntimeError(f"App config file was not found: {DEFAULT_APP_CONFIG_PATH}")
+        with DEFAULT_APP_CONFIG_PATH.open("rb") as file:
+            app_data = tomllib.load(file)
+        snowflake = app_data.get("snowflake", {})
+        columns = app_data.get("columns", {})
+        row_limit = None
+        if isinstance(snowflake, dict) and snowflake.get("row_limit") not in (None, ""):
+            row_limit = int(snowflake["row_limit"])
         return cls(
-            model_key=model.key if model else DEFAULT_MODEL_KEY,
-            columns=ColumnConfig.from_env(),
-            model_dir=(
-                model.model_dir
-                if model
-                else Path(os.getenv("EMBEDDING_MODEL_DIR", str(DEFAULT_MODEL_DIR))).resolve()
-            ),
-            chroma_dir=Path(os.getenv("CHROMA_DB_DIR", str(DEFAULT_CHROMA_DIR))).resolve(),
-            artifacts_dir=Path(os.getenv("ARTIFACTS_DIR", str(DEFAULT_ARTIFACTS_DIR))).resolve(),
-            collection_name=os.getenv("CHROMA_COLLECTION", DEFAULT_COLLECTION_NAME),
-            embedding_model_name=(
-                model.repo_id if model else os.getenv("EMBEDDING_MODEL_NAME", DEFAULT_EMBEDDING_MODEL_NAME)
-            ),
-            embedding_version=os.getenv("EMBEDDING_VERSION", DEFAULT_EMBEDDING_VERSION),
+            snowflake_table=str(snowflake.get("table", "")).strip() if isinstance(snowflake, dict) else "",
+            snowflake_row_limit=row_limit,
+            columns=ColumnConfig.from_mapping(columns if isinstance(columns, dict) else {}),
         )
+
+    def validate_source(self) -> None:
+        if not self.snowflake_table:
+            raise ValueError("Required app config value cannot be blank: snowflake.table")
+        if self.snowflake_row_limit is not None and self.snowflake_row_limit <= 0:
+            raise ValueError("snowflake.row_limit must be a positive integer when set")
+        self.columns.validate_required()
 
     def index_manifest_path_for_model(self, model_key: str) -> Path:
         return self.artifacts_dir / f"index_manifest_{model_storage_key(model_key)}.json"
@@ -244,33 +189,21 @@ def quote_identifier(identifier: str) -> str:
     return f'"{escaped}"'
 
 
-def get_config() -> AppConfig:
-    return AppConfig.from_env()
-
-
 def model_storage_key(model_key: str) -> str:
     storage_key = re.sub(r"[^0-9A-Za-z_-]+", "_", model_key).strip("_")
     return storage_key.replace("-", "_").lower()
 
 
-def model_collection_name(base_collection_name: str, model_key: str) -> str:
-    return f"{base_collection_name}_{model_storage_key(model_key)}"
-
-
 def versioned_collection_name(base_collection_name: str, model_key: str, index_hash: str) -> str:
-    return f"{model_collection_name(base_collection_name, model_key)}_{index_hash[:12]}"
-
-
-def models_root() -> Path:
-    return Path(os.getenv("MODELS_DIR", str(DEFAULT_MODELS_DIR))).resolve()
+    return f"{base_collection_name}_{model_storage_key(model_key)}_{index_hash[:12]}"
 
 
 def embedding_models_dir() -> Path:
-    return Path(os.getenv("EMBEDDING_MODELS_DIR", str(models_root() / "embeddings"))).resolve()
+    return DEFAULT_EMBEDDING_MODELS_DIR.resolve()
 
 
 def reranker_models_dir() -> Path:
-    return Path(os.getenv("RERANKER_MODELS_DIR", str(models_root() / "rerankers"))).resolve()
+    return DEFAULT_RERANKER_MODELS_DIR.resolve()
 
 
 def model_label_from_key(model_key: str) -> str:
@@ -328,23 +261,3 @@ def get_embedding_model(key: str) -> EmbeddingModelConfig:
             return model
     available = ", ".join(model.key for model in available_embedding_models()) or "none"
     raise ValueError(f"Unknown embedding model key '{key}'. Available keys: {available}")
-
-
-def get_default_embedding_model() -> EmbeddingModelConfig | None:
-    models = available_embedding_models()
-    if not models:
-        return None
-    return next((model for model in models if model.key == DEFAULT_MODEL_KEY), models[0])
-
-
-def get_reranker_model(key: str | None = None) -> RerankerModelConfig:
-    models = available_reranker_models()
-    if key is None:
-        if not models:
-            raise ValueError("No local reranker models found.")
-        return models[0]
-    for model in models:
-        if model.key == key:
-            return model
-    available = ", ".join(model.key for model in models) or "none"
-    raise ValueError(f"Unknown reranker model key '{key}'. Available keys: {available}")

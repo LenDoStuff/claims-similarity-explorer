@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from src.clustering import (
     build_cluster_map,
@@ -93,17 +94,15 @@ def test_build_cluster_map_returns_umap_points() -> None:
     assert first["description"] == "Water leakage damaged warehouse stock."
 
 
-def test_build_cluster_map_uses_fallback_for_tiny_datasets() -> None:
-    cluster_map = build_cluster_map(
-        ["1", "2"],
-        [labeled_document("Water leakage."), labeled_document("Fire loss.")],
-        [{"claim_id": "1"}, {"claim_id": "2"}],
-        np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
-        np.asarray([0, 1]),
-    )
-
-    assert cluster_map["projection"]["method"] == "deterministic_fallback"
-    assert [(point["x"], point["y"]) for point in cluster_map["points"]] == [(-0.5, 0.0), (0.5, 0.0)]
+def test_build_cluster_map_requires_enough_embeddings_for_umap() -> None:
+    with pytest.raises(ValueError, match="At least 3 embeddings"):
+        build_cluster_map(
+            ["1", "2"],
+            [labeled_document("Water leakage."), labeled_document("Fire loss.")],
+            [{"claim_id": "1"}, {"claim_id": "2"}],
+            np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+            np.asarray([0, 1]),
+        )
 
 
 def test_build_cluster_summary_returns_representatives_and_metadata() -> None:

@@ -52,7 +52,7 @@ def render_search_page(
     if claims_frame.empty:
         if manifest.get("collection_name") and manifest.get("index_hash"):
             st.info(
-                f"The active Chroma collection for {selected_model.label} has no claims. "
+                f"The active Chroma collection for {selected_model.label} is missing or has no claims. "
                 "Open Index Setup and click `Load or refresh index`."
             )
         else:
@@ -582,27 +582,6 @@ def active_filter_count(filters: SearchFilters) -> int:
     count += int(filters.reserve_amount_range != (None, None))
     count += int(filters.paid_amount_range != (None, None))
     return count
-
-
-def result_metadata_items(row: pd.Series) -> list[str]:
-    items = []
-    for label, field in [
-        ("Line", "line_of_business"),
-        ("Type", "claim_type"),
-        ("Cause", "cause_of_loss"),
-        ("Object", "damaged_object"),
-        ("Country", "country"),
-        ("Status", "claim_status"),
-        ("Loss year", "loss_year"),
-        ("Loss date", "loss_date"),
-        ("Reserve", "reserve_amount"),
-        ("Paid", "paid_amount"),
-        ("Currency", "currency"),
-        ("Policy", "policy_type"),
-    ]:
-        if field in row and pd.notna(row.get(field)):
-            items.append(f"{label}: {format_metadata_value(field, row.get(field))}")
-    return items
 
 
 def format_score(value: Any) -> str:

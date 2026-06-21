@@ -20,7 +20,7 @@ from app.ui_helpers import (
     load_claims_frame,
     local_data_version,
 )
-from src.chroma_store import get_collection
+from src.chroma_store import get_existing_collection
 from src.config import AppConfig
 from src.diagnostics import read_json
 from src.indexing import active_collection_name
@@ -33,10 +33,9 @@ st.set_page_config(
 )
 
 
-def main() -> None:
+def main(config: AppConfig | None = None) -> None:
     inject_css()
-    load_dotenv_if_available()
-    config = AppConfig.from_env()
+    config = config or AppConfig.from_app_config()
 
     st.title("Claims Similarity Explorer")
     st.caption("Local semantic search and exploratory KMeans clustering for insurance claims.")
@@ -61,13 +60,16 @@ def main() -> None:
             manifest = read_json(config.index_manifest_path_for_model(selected_model.key))
             collection_name = active_collection_name(config, selected_model.key, manifest)
             if collection_name:
-                collection = get_collection(config.chroma_dir, collection_name)
-                claims_frame = load_claims_frame(
-                    str(config.chroma_dir),
-                    collection_name,
-                    local_data_version(config, selected_model.key),
-                )
-                clusters, cluster_map = read_cluster_artifacts(config, selected_model.key, manifest)
+                collection = get_existing_collection(config.chroma_dir, collection_name)
+                if collection is not None:
+                    claims_frame = load_claims_frame(
+                        str(config.chroma_dir),
+                        collection_name,
+                        local_data_version(config, selected_model.key),
+                    )
+                    clusters, cluster_map = read_cluster_artifacts(config, selected_model.key, manifest)
+                else:
+                    claims_frame = pd.DataFrame()
             else:
                 claims_frame = pd.DataFrame()
             render_search_page(config, selected_model, collection, claims_frame, manifest)
@@ -92,14 +94,6 @@ def read_cluster_artifacts(config: AppConfig, model_key: str, manifest: dict) ->
     if index_hash and clusters.get("index_hash") != index_hash:
         return {}, {}
     return clusters, cluster_map
-
-
-def load_dotenv_if_available() -> None:
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
-    load_dotenv(PROJECT_ROOT / ".env")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,18 @@
+[snowflake]
+table = "SCHADEN"
+row_limit = 1000
+
+[columns]
+claim_id = "claim_id"
+description = "claim_description"
+line_of_business = "line_of_business"
+claim_type = "claim_type"
+cause_of_loss = "cause_of_loss"
+damaged_object = "damaged_object"
+country = "country"
+claim_status = "claim_status"
+loss_date = "loss_date"
+reserve_amount = "reserve_amount"
+paid_amount = "paid_amount"
+currency = "currency"
+policy_type = "policy_type"

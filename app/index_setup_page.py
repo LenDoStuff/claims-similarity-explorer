@@ -5,7 +5,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from src.config import AppConfig, SnowflakeConfig, available_embedding_models, available_reranker_models
+from src.config import AppConfig, available_embedding_models, available_reranker_models
 from src.diagnostics import read_json
 from src.indexing import active_collection_name, build_index_from_snowflake
 
@@ -20,22 +20,22 @@ def render_index_setup_page(config: AppConfig) -> None:
     render_column_mapping(config)
 
     try:
-        snowflake = SnowflakeConfig.from_env()
-    except RuntimeError as exc:
+        config.validate_source()
+    except ValueError as exc:
         st.warning(str(exc))
-        snowflake = None
+        source_error = exc
     else:
-        st.success(f"Snowflake source configured: `{snowflake.qualified_table}`")
+        source_error = None
+        st.success(f"Snowflake table configured in `app_config.toml`: `{config.snowflake_table}`")
+        if config.snowflake_row_limit:
+            st.caption(f"Indexing uses a random Snowflake sample of `{config.snowflake_row_limit}` rows.")
+        else:
+            st.caption("Indexing loads all rows from the configured Snowflake table.")
+        st.caption("Snowpark uses the default local Snowflake connection from `connections.toml`.")
 
     if not embedding_models:
         st.info("Add local embedding models under `models/embeddings` before indexing.")
         return
-    try:
-        config.columns.validate_required()
-        column_error = None
-    except ValueError as exc:
-        st.warning(str(exc))
-        column_error = exc
 
     model_by_key = {model.key: model for model in embedding_models}
     default_index = next(
@@ -55,7 +55,7 @@ def render_index_setup_page(config: AppConfig) -> None:
     clicked = st.button(
         "Load or refresh index",
         type="primary",
-        disabled=snowflake is None or column_error is not None,
+        disabled=source_error is not None,
         use_container_width=True,
     )
     if not clicked:
@@ -63,7 +63,7 @@ def render_index_setup_page(config: AppConfig) -> None:
 
     with st.spinner("Loading claims and preparing the Chroma index..."):
         try:
-            result = build_index_from_snowflake(config, selected_model, snowflake)
+            result = build_index_from_snowflake(config, selected_model)
         except Exception as exc:
             st.error(f"Index build failed: {exc}")
             return
@@ -89,7 +89,7 @@ def render_model_tables(embedding_models: list[Any], reranker_models: list[Any])
 
 def render_column_mapping(config: AppConfig) -> None:
     st.markdown("**Snowflake column mapping**")
-    st.caption("Required mappings must be set. Optional mappings can be blank to skip the field.")
+    st.caption("Mappings are read from `app_config.toml`; credentials stay in your local Snowflake files.")
     st.table(pd.DataFrame(config.columns.mapping_rows()))
 
 

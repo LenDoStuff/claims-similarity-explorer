@@ -1,24 +1,27 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 import pandas as pd
 
-from src.config import ColumnConfig, SnowflakeConfig, quote_identifier
+from src.config import ColumnConfig, quote_identifier
 
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 
-def build_claims_query(snowflake: SnowflakeConfig, columns: ColumnConfig, *, limit: int | None = None) -> str:
+def build_claims_query(table: str, columns: ColumnConfig, *, row_limit: int | None = None) -> str:
+    if not table:
+        raise ValueError("Required app config value cannot be blank: snowflake.table")
+    if row_limit is not None and row_limit <= 0:
+        raise ValueError("snowflake.row_limit must be a positive integer when set")
     columns.validate_required()
     selected = ", ".join(
         f"{source_identifier(column)} AS {quote_identifier(column)}" for column in columns.selected_columns
     )
-    query = f"SELECT {selected} FROM {snowflake.qualified_table}"
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
+    query = f"SELECT {selected} FROM {source_identifier(table)}"
+    if row_limit is not None:
+        query += f" SAMPLE ({int(row_limit)} ROWS)"
     return query
 
 
@@ -31,34 +34,16 @@ def source_identifier(identifier: str) -> str:
 
 
 def load_claims_from_snowflake(
-    snowflake: SnowflakeConfig,
+    table: str,
     columns: ColumnConfig,
     *,
-    limit: int | None = None,
+    row_limit: int | None = None,
 ) -> pd.DataFrame:
-    query = build_claims_query(snowflake, columns, limit=limit)
-    session = create_snowpark_session(snowflake)
+    from snowflake.snowpark import Session
+
+    query = build_claims_query(table, columns, row_limit=row_limit)
+    session = Session.builder.create()
     try:
         return session.sql(query).to_pandas()
     finally:
         session.close()
-
-
-def create_snowpark_session(snowflake: SnowflakeConfig) -> Any:
-    from snowflake.snowpark import Session
-
-    return Session.builder.configs(snowpark_connection_parameters(snowflake)).create()
-
-
-def snowpark_connection_parameters(snowflake: SnowflakeConfig) -> dict[str, Any]:
-    parameters: dict[str, Any] = {
-        "account": snowflake.account,
-        "user": snowflake.user,
-        "password": snowflake.password,
-        "warehouse": snowflake.warehouse,
-        "database": snowflake.database,
-        "schema": snowflake.schema,
-    }
-    if snowflake.role:
-        parameters["role"] = snowflake.role
-    return parameters

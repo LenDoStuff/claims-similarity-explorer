@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from src.chroma_store import get_existing_collection, reset_collection, upsert_records
-from src.config import AppConfig, EmbeddingModelConfig, SnowflakeConfig, versioned_collection_name
+from src.config import AppConfig, EmbeddingModelConfig, versioned_collection_name
 from src.diagnostics import read_json, write_json
 from src.text_preprocessing import prepare_claim_records
 
@@ -26,7 +26,6 @@ class IndexBuildResult:
 def build_index_from_snowflake(
     config: AppConfig,
     model_config: EmbeddingModelConfig,
-    snowflake: SnowflakeConfig,
     *,
     limit: int | None = None,
     batch_size: int = 64,
@@ -34,13 +33,15 @@ def build_index_from_snowflake(
 ) -> IndexBuildResult:
     from src.snowflake_io import load_claims_from_snowflake
 
-    frame = load_claims_from_snowflake(snowflake, config.columns, limit=limit)
+    config.validate_source()
+    row_limit = limit if limit is not None else config.snowflake_row_limit
+    frame = load_claims_from_snowflake(config.snowflake_table, config.columns, row_limit=row_limit)
     return build_index_from_frame(
         config,
         model_config,
         frame,
         source="snowflake",
-        source_identity=snowflake.qualified_table,
+        source_identity=f"{config.snowflake_table}|sample_rows={row_limit or 'all'}",
         batch_size=batch_size,
         chroma_batch_size=chroma_batch_size,
     )

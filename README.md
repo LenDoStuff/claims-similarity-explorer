@@ -21,40 +21,61 @@ models/rerankers/mmarco-mMiniLMv2-L12-H384-v1/
 
 The app scans `models/embeddings/` and `models/rerankers/` at startup. Add another local model folder there and it appears in Streamlit without changing code. Model scanning does not load weights; weights are loaded only for indexing, search, or reranking. The app expects local Sentence Transformers models and does not call an external embedding or reranking API at runtime.
 
-## Snowflake Environment
+## Snowflake Connection
 
-Copy `.env.example` to `.env` or set these variables in your shell:
+The app connects with Snowpark using Snowflake's native local connection files. It does not read Snowflake credentials from the repo.
 
-```text
-SNOWFLAKE_ACCOUNT
-SNOWFLAKE_USER
-SNOWFLAKE_PASSWORD
-SNOWFLAKE_WAREHOUSE
-SNOWFLAKE_DATABASE
-SNOWFLAKE_SCHEMA
-SNOWFLAKE_TABLE
-SNOWFLAKE_ROLE
+On Windows, keep credentials in:
+
+```toml
+# C:\Users\<username>\AppData\Local\Snowflake\connections.toml
+[myconnection]
+account = "myorganization-myaccount"
+user = "jdoe"
+password = "..."
+warehouse = "COMPUTE_WH"
+database = "CLAIMS"
+schema = "CLAIMS_META"
+role = "..."
 ```
 
-The Snowflake table must provide a claim ID and claim description. The polished result cards use a fixed claims metadata shape, but each source column can be mapped in `.env`:
+Set the default connection in the Snowflake config file:
 
-```text
-CLAIM_ID_COLUMN=claim_id
-CLAIM_DESCRIPTION_COLUMN=claim_description
-LINE_OF_BUSINESS_COLUMN=line_of_business
-CLAIM_TYPE_COLUMN=claim_type
-CAUSE_OF_LOSS_COLUMN=cause_of_loss
-DAMAGED_OBJECT_COLUMN=damaged_object
-COUNTRY_COLUMN=country
-CLAIM_STATUS_COLUMN=claim_status
-LOSS_DATE_COLUMN=loss_date
-RESERVE_AMOUNT_COLUMN=reserve_amount
-PAID_AMOUNT_COLUMN=paid_amount
-CURRENCY_COLUMN=currency
-POLICY_TYPE_COLUMN=policy_type
+```toml
+# C:\Users\<username>\AppData\Local\Snowflake\config.toml
+default_connection_name = "myconnection"
 ```
 
-Only `CLAIM_ID_COLUMN` and `CLAIM_DESCRIPTION_COLUMN` are required. Set any optional metadata mapping to an empty value to skip selecting, embedding, filtering, and rendering that field.
+Snowpark creates sessions with:
+
+```python
+Session.builder.create()
+```
+
+The table and column mapping live in the tracked repo file `app_config.toml`:
+
+```toml
+[snowflake]
+table = "SCHADEN"
+row_limit = 1000
+
+[columns]
+claim_id = "claim_id"
+description = "claim_description"
+line_of_business = "line_of_business"
+claim_type = "claim_type"
+cause_of_loss = "cause_of_loss"
+damaged_object = "damaged_object"
+country = "country"
+claim_status = "claim_status"
+loss_date = "loss_date"
+reserve_amount = "reserve_amount"
+paid_amount = "paid_amount"
+currency = "currency"
+policy_type = "policy_type"
+```
+
+Only `claim_id` and `description` are required. Set any optional metadata mapping to an empty string to skip selecting, embedding, filtering, and rendering that field. `row_limit` is optional; when set, indexing uses `SAMPLE (N ROWS)` to load a random Snowflake subset instead of the full table.
 
 ## Build the Local Index
 
@@ -64,7 +85,7 @@ python scripts/build_chroma_index.py
 
 This loads Snowflake rows, hashes the prepared records and selected model folder, then reuses an existing matching Chroma collection or builds a new versioned collection:
 
-- Loads selected columns from Snowflake through Snowpark Python.
+- Loads selected columns from Snowflake through Snowpark Python, using `snowflake.row_limit` when configured.
 - Cleans claim text.
 - Builds event-focused embedding text.
 - Embeds with `models/embeddings/multilingual-e5-small/` by default.

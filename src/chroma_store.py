@@ -7,6 +7,7 @@ import chromadb
 import numpy as np
 import pandas as pd
 from chromadb.api.models.Collection import Collection
+from chromadb.errors import NotFoundError
 
 
 def get_chroma_client(chroma_dir: Path) -> chromadb.PersistentClient:
@@ -16,17 +17,14 @@ def get_chroma_client(chroma_dir: Path) -> chromadb.PersistentClient:
 
 def get_collection(chroma_dir: Path, collection_name: str) -> Collection:
     client = get_chroma_client(chroma_dir)
-    return client.get_or_create_collection(
-        name=collection_name,
-        metadata={"hnsw:space": "cosine"},
-    )
+    return client.get_collection(name=collection_name)
 
 
 def get_existing_collection(chroma_dir: Path, collection_name: str) -> Collection | None:
     client = get_chroma_client(chroma_dir)
     try:
         return client.get_collection(name=collection_name)
-    except Exception:
+    except NotFoundError:
         return None
 
 
@@ -34,7 +32,7 @@ def reset_collection(chroma_dir: Path, collection_name: str) -> Collection:
     client = get_chroma_client(chroma_dir)
     try:
         client.delete_collection(collection_name)
-    except Exception:
+    except NotFoundError:
         pass
     return client.get_or_create_collection(
         name=collection_name,
@@ -78,14 +76,6 @@ def collection_to_frame(collection: Collection) -> pd.DataFrame:
         row["document"] = document
         rows.append(row)
     return pd.DataFrame(rows)
-
-
-def get_existing_claim_options(collection: Collection) -> pd.DataFrame:
-    frame = collection_to_frame(collection)
-    if frame.empty:
-        return frame
-    cols = [col for col in ["claim_id", "line_of_business", "claim_type", "country", "claim_status", "loss_year"] if col in frame]
-    return frame[cols].sort_values("claim_id")
 
 
 def update_metadata_values(collection: Collection, ids: list[str], updates: list[dict[str, Any]]) -> None:

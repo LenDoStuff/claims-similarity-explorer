@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 def main() -> None:
     args = parse_args()
 
-    from src.chroma_store import get_collection
+    from src.chroma_store import get_existing_collection
     from src.clustering import (
         assign_clusters,
         build_cluster_map,
@@ -27,7 +27,7 @@ def main() -> None:
     from src.diagnostics import read_json
     from src.indexing import active_collection_name
 
-    config = AppConfig.from_env()
+    config = AppConfig.from_app_config()
     model_config = get_embedding_model(args.model_key or config.model_key)
     manifest = read_json(config.index_manifest_path_for_model(model_config.key))
     collection_name = active_collection_name(config, model_config.key, manifest)
@@ -36,7 +36,12 @@ def main() -> None:
             f"No active hash-based index manifest collection is available for {model_config.key}. "
             "Use Index Setup or run scripts/build_chroma_index.py first."
         )
-    collection = get_collection(config.chroma_dir, collection_name)
+    collection = get_existing_collection(config.chroma_dir, collection_name)
+    if collection is None:
+        raise RuntimeError(
+            f"Active Chroma collection '{collection_name}' is missing. "
+            "Use Index Setup or run scripts/build_chroma_index.py first."
+        )
     ids, documents, metadatas, embeddings = load_cluster_input(collection)
     if len(ids) == 0:
         raise RuntimeError("No Chroma records with embeddings are available. Run build_chroma_index.py first.")

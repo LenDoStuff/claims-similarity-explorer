@@ -264,34 +264,3 @@ def _first(value: Any) -> list[Any]:
     if isinstance(value, list) and value and isinstance(value[0], list):
         return value[0]
     return value
-
-
-def display_columns(frame: pd.DataFrame) -> pd.DataFrame:
-    columns = [
-        "final_score",
-        "semantic_score",
-        "bm25_score",
-        "rerank_score",
-        "similarity",
-        "distance",
-        "claim_id",
-        "line_of_business",
-        "claim_type",
-        "cause_of_loss",
-        "country",
-        "claim_status",
-        "loss_year",
-        "reserve_amount",
-        "paid_amount",
-        "currency",
-    ]
-    available = [column for column in columns if column in frame.columns]
-    result = frame[available].copy() if available else frame.copy()
-    if "similarity" in result:
-        result["similarity"] = result["similarity"].map(lambda value: round(float(value), 4))
-    if "distance" in result:
-        result["distance"] = result["distance"].map(lambda value: round(float(value), 4))
-    for column in ["final_score", "semantic_score", "bm25_score", "rerank_score"]:
-        if column in result:
-            result[column] = result[column].map(lambda value: round(float(value), 4))
-    return result

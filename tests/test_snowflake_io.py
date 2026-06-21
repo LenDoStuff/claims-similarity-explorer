@@ -3,39 +3,20 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.config import ColumnConfig, SnowflakeConfig
-from src.snowflake_io import build_claims_query, load_claims_from_snowflake, snowpark_connection_parameters
+from src.config import ColumnConfig
+from src.snowflake_io import build_claims_query, load_claims_from_snowflake
 
 
 def test_build_claims_query_aliases_columns_to_configured_names() -> None:
-    snowflake = SnowflakeConfig(
-        account="acct",
-        user="user",
-        password="pw",
-        warehouse="wh",
-        database="DB",
-        schema="SCHEMA",
-        table="CLAIMS",
-    )
-
-    query = build_claims_query(snowflake, ColumnConfig(), limit=10)
+    query = build_claims_query("CLAIMS", ColumnConfig(), row_limit=10)
 
     assert 'claim_id AS "claim_id"' in query
     assert 'claim_description AS "claim_description"' in query
-    assert 'FROM "DB"."SCHEMA"."CLAIMS"' in query
-    assert "LIMIT 10" in query
+    assert "FROM CLAIMS" in query
+    assert "SAMPLE (10 ROWS)" in query
 
 
 def test_build_claims_query_skips_blank_optional_columns() -> None:
-    snowflake = SnowflakeConfig(
-        account="acct",
-        user="user",
-        password="pw",
-        warehouse="wh",
-        database="DB",
-        schema="SCHEMA",
-        table="CLAIMS",
-    )
     columns = ColumnConfig(
         line_of_business="",
         claim_type="",
@@ -50,55 +31,27 @@ def test_build_claims_query_skips_blank_optional_columns() -> None:
         policy_type="",
     )
 
-    query = build_claims_query(snowflake, columns)
+    query = build_claims_query("CLAIMS", columns)
 
-    assert query == 'SELECT claim_id AS "claim_id", claim_description AS "claim_description" FROM "DB"."SCHEMA"."CLAIMS"'
+    assert query == 'SELECT claim_id AS "claim_id", claim_description AS "claim_description" FROM CLAIMS'
+
+
+def test_build_claims_query_rejects_blank_table() -> None:
+    with pytest.raises(ValueError, match="snowflake.table"):
+        build_claims_query("", ColumnConfig())
+
+
+def test_build_claims_query_rejects_non_positive_row_limit() -> None:
+    with pytest.raises(ValueError, match="snowflake.row_limit"):
+        build_claims_query("CLAIMS", ColumnConfig(), row_limit=0)
 
 
 def test_build_claims_query_rejects_blank_required_columns() -> None:
-    snowflake = SnowflakeConfig(
-        account="acct",
-        user="user",
-        password="pw",
-        warehouse="wh",
-        database="DB",
-        schema="SCHEMA",
-        table="CLAIMS",
-    )
-
-    with pytest.raises(ValueError, match="CLAIM_DESCRIPTION_COLUMN"):
-        build_claims_query(snowflake, ColumnConfig(description=""))
+    with pytest.raises(ValueError, match="columns.description"):
+        build_claims_query("CLAIMS", ColumnConfig(description=""))
 
 
-def test_snowpark_connection_parameters_include_optional_role() -> None:
-    snowflake = SnowflakeConfig(
-        account="acct",
-        user="user",
-        password="pw",
-        warehouse="wh",
-        database="DB",
-        schema="SCHEMA",
-        table="CLAIMS",
-        role="ROLE",
-    )
-
-    parameters = snowpark_connection_parameters(snowflake)
-
-    assert parameters["account"] == "acct"
-    assert parameters["database"] == "DB"
-    assert parameters["role"] == "ROLE"
-
-
-def test_load_claims_from_snowflake_uses_snowpark_session(monkeypatch) -> None:
-    snowflake = SnowflakeConfig(
-        account="acct",
-        user="user",
-        password="pw",
-        warehouse="wh",
-        database="DB",
-        schema="SCHEMA",
-        table="CLAIMS",
-    )
+def test_load_claims_from_snowflake_uses_default_snowpark_session(monkeypatch) -> None:
     calls = {}
 
     class FakeDataFrame:
@@ -114,12 +67,21 @@ def test_load_claims_from_snowflake_uses_snowpark_session(monkeypatch) -> None:
         def close(self) -> None:
             calls["closed"] = True
 
-    monkeypatch.setattr("src.snowflake_io.create_snowpark_session", lambda config: FakeSession())
+    class FakeBuilder:
+        def create(self) -> FakeSession:
+            calls["created"] = True
+            return FakeSession()
 
-    frame = load_claims_from_snowflake(snowflake, ColumnConfig(), limit=5)
+    class FakeSessionClass:
+        builder = FakeBuilder()
+
+    monkeypatch.setattr("snowflake.snowpark.Session", FakeSessionClass)
+
+    frame = load_claims_from_snowflake("CLAIMS", ColumnConfig(), row_limit=5)
 
     assert frame["claim_id"].tolist() == ["1"]
-    assert 'FROM "DB"."SCHEMA"."CLAIMS"' in calls["query"]
-    assert "LIMIT 5" in calls["query"]
+    assert "FROM CLAIMS" in calls["query"]
+    assert "SAMPLE (5 ROWS)" in calls["query"]
+    assert calls["created"]
     assert calls["to_pandas"]
     assert calls["closed"]

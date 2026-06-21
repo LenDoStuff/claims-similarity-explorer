@@ -8,27 +8,40 @@ from src.chroma_store import reset_collection
 from src.config import AppConfig
 
 
-def test_streamlit_model_dropdown_and_missing_index_message(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CHROMA_DB_DIR", str(tmp_path / "chroma"))
-    monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+def run_streamlit_app(config) -> None:
+    from app.streamlit_app import main
 
-    app = AppTest.from_file("app/streamlit_app.py")
+    main(config)
+
+
+def make_app_config(tmp_path) -> AppConfig:
+    return AppConfig(
+        snowflake_table="CLAIMS",
+        snowflake_row_limit=10,
+        chroma_dir=tmp_path / "chroma",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+
+def test_streamlit_model_dropdown_and_missing_index_message(tmp_path) -> None:
+    config = make_app_config(tmp_path)
+
+    app = AppTest.from_function(run_streamlit_app, args=(config,))
     app.run(timeout=60)
 
     assert not app.exception
     assert any(tab.label == "Index Setup" for tab in app.tabs)
     assert any(subheader.value == "Index Setup" for subheader in app.subheader)
     assert any("Snowflake column mapping" in markdown.value for markdown in app.markdown)
+    assert any("random Snowflake sample" in caption.value for caption in app.caption)
     model_select = next(select for select in app.selectbox if select.label == "Embedding model")
     assert "Multilingual E5 Small" in model_select.options
     assert model_select.value == "multilingual-e5-small"
     assert any("Index Setup" in info.value for info in app.info)
 
 
-def test_streamlit_search_configuration_controls_render(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CHROMA_DB_DIR", str(tmp_path / "chroma"))
-    monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path / "artifacts"))
-    config = AppConfig.from_env()
+def test_streamlit_search_configuration_controls_render(tmp_path) -> None:
+    config = make_app_config(tmp_path)
     collection_name = "claims_multilingual_e5_small_active_test"
     collection = reset_collection(config.chroma_dir, collection_name)
     collection.upsert(
@@ -50,7 +63,7 @@ def test_streamlit_search_configuration_controls_render(monkeypatch, tmp_path) -
         encoding="utf-8",
     )
 
-    app = AppTest.from_file("app/streamlit_app.py")
+    app = AppTest.from_function(run_streamlit_app, args=(config,))
     app.run(timeout=60)
 
     assert not app.exception
@@ -75,10 +88,8 @@ def test_streamlit_search_configuration_controls_render(monkeypatch, tmp_path) -
     assert any("claim-result-card" in markdown.value for markdown in app.markdown)
 
 
-def test_streamlit_cluster_explorer_tabs_and_review_controls_render(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CHROMA_DB_DIR", str(tmp_path / "chroma"))
-    monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path / "artifacts"))
-    config = AppConfig.from_env()
+def test_streamlit_cluster_explorer_tabs_and_review_controls_render(tmp_path) -> None:
+    config = make_app_config(tmp_path)
     collection_name = "claims_multilingual_e5_small_cluster_test"
     index_hash = "active-cluster-test"
     collection = reset_collection(config.chroma_dir, collection_name)
@@ -184,7 +195,7 @@ def test_streamlit_cluster_explorer_tabs_and_review_controls_render(monkeypatch,
         encoding="utf-8",
     )
 
-    app = AppTest.from_file("app/streamlit_app.py")
+    app = AppTest.from_function(run_streamlit_app, args=(config,))
     app.run(timeout=60)
 
     assert not app.exception
@@ -199,10 +210,8 @@ def test_streamlit_cluster_explorer_tabs_and_review_controls_render(monkeypatch,
     assert any(button.label == "Save review" for button in app.button)
 
 
-def test_streamlit_cluster_map_missing_artifact_message(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CHROMA_DB_DIR", str(tmp_path / "chroma"))
-    monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path / "artifacts"))
-    config = AppConfig.from_env()
+def test_streamlit_cluster_map_missing_artifact_message(tmp_path) -> None:
+    config = make_app_config(tmp_path)
     collection_name = "claims_multilingual_e5_small_missing_map_test"
     index_hash = "active-missing-map-test"
     collection = reset_collection(config.chroma_dir, collection_name)
@@ -262,7 +271,7 @@ def test_streamlit_cluster_map_missing_artifact_message(monkeypatch, tmp_path) -
         encoding="utf-8",
     )
 
-    app = AppTest.from_file("app/streamlit_app.py")
+    app = AppTest.from_function(run_streamlit_app, args=(config,))
     app.run(timeout=60)
 
     assert not app.exception

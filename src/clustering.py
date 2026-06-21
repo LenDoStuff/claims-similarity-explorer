@@ -201,10 +201,8 @@ def build_cluster_map(
 
 def project_embeddings_2d(embeddings: np.ndarray) -> tuple[np.ndarray, str, int | None]:
     embeddings = np.asarray(embeddings, dtype=np.float32)
-    if embeddings.ndim != 2 or len(embeddings) == 0:
-        return np.empty((0, 2), dtype=np.float32), "deterministic_fallback", None
-    if len(embeddings) < 3:
-        return fallback_coordinates(len(embeddings)), "deterministic_fallback", None
+    if embeddings.ndim != 2 or len(embeddings) < 3:
+        raise ValueError("At least 3 embeddings are required to build a UMAP cluster map.")
 
     try:
         import umap
@@ -221,14 +219,6 @@ def project_embeddings_2d(embeddings: np.ndarray) -> tuple[np.ndarray, str, int 
     )
     coordinates = reducer.fit_transform(normalize(embeddings))
     return np.asarray(coordinates, dtype=np.float32), "UMAP", n_neighbors
-
-
-def fallback_coordinates(count: int) -> np.ndarray:
-    if count <= 0:
-        return np.empty((0, 2), dtype=np.float32)
-    if count == 1:
-        return np.asarray([[0.0, 0.0]], dtype=np.float32)
-    return np.asarray([[-0.5, 0.0], [0.5, 0.0]], dtype=np.float32)
 
 
 def frequent_terms(texts: list[str], *, corpus_texts: list[str] | None = None, limit: int = 10) -> list[str]:
