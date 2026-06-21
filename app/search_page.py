@@ -233,7 +233,9 @@ def result_card_html(rank: int, row: pd.Series) -> str:
         ("Loss date", "loss_date"),
         ("Policy", "policy_type"),
     ])
-    scores = " <span>|</span> ".join(escape(item) for item in result_score_items(row))
+    chips_html = f'<div class="claim-chip-row">{chips}</div>' if chips else ""
+    tiles_html = f'<div class="claim-tile-row">{tiles}</div>' if tiles else ""
+    scores_html = score_details_html(row)
     return f"""
     <div class="claim-result-card">
         <div class="claim-card-top">
@@ -250,9 +252,9 @@ def result_card_html(rank: int, row: pd.Series) -> str:
             </div>
         </div>
         <div class="claim-description">{description}</div>
-        <div class="claim-chip-row">{chips}</div>
-        <div class="claim-tile-row">{tiles}</div>
-        <div class="claim-score-details"><span>Scoring details</span> {scores}</div>
+        {chips_html}
+        {tiles_html}
+        {scores_html}
     </div>
     """
 
@@ -273,6 +275,22 @@ def result_tile_html(row: pd.Series, field: str, label: str) -> str:
     else:
         value = escape(format_metadata_value(field, row.get(field)))
     return f'<div class="claim-tile"><span>{escape(label)}</span><strong>{value}</strong></div>'
+
+
+def score_details_html(row: pd.Series) -> str:
+    items = result_score_items(row)
+    if not items:
+        return ""
+    cells = "".join(
+        f'<div class="claim-score-detail"><span>{escape(label)}</span><strong>{escape(value)}</strong></div>'
+        for label, value in items
+    )
+    return (
+        '<div class="claim-score-details">'
+        '<div class="claim-score-title">Scoring details</div>'
+        f'<div class="claim-score-detail-grid">{cells}</div>'
+        '</div>'
+    )
 
 
 def inject_result_card_css() -> None:
@@ -463,17 +481,42 @@ def inject_result_card_css() -> None:
         .claim-score-details {
             border-top: 1px solid #e5e7eb;
             padding-top: 0.65rem;
-            color: #64748b;
-            font-size: 0.82rem;
+            display: grid;
+            grid-template-columns: 120px minmax(0, 1fr);
+            gap: 0.75rem;
+            align-items: start;
         }
-        .claim-score-details > span:first-child {
+        .claim-score-title {
             color: #334155;
             font-weight: 700;
-            margin-right: 1rem;
+            font-size: 0.82rem;
+            padding-top: 0.45rem;
+        }
+        .claim-score-detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 0.5rem;
+        }
+        .claim-score-detail {
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            background: #f8fafc;
+            padding: 0.45rem 0.6rem;
+        }
+        .claim-score-detail span {
+            display: block;
+            color: #64748b;
+            font-size: 0.74rem;
+            margin-bottom: 0.18rem;
+        }
+        .claim-score-detail strong {
+            color: #0f172a;
+            font-size: 0.88rem;
         }
         @media (max-width: 900px) {
             .claim-results-toolbar,
-            .claim-tile-row {
+            .claim-tile-row,
+            .claim-score-details {
                 grid-template-columns: 1fr;
             }
             .claim-card-top {
@@ -509,18 +552,28 @@ def result_description(row: pd.Series) -> str:
     return document
 
 
-def result_score_items(row: pd.Series) -> list[str]:
+def result_score_items(row: pd.Series) -> list[tuple[str, str]]:
     items = []
-    for label, field in [
-        ("semantic", "semantic_score"),
-        ("BM25", "bm25_score"),
-        ("rerank", "rerank_score"),
-        ("similarity", "similarity"),
-        ("distance", "distance"),
-    ]:
-        if field in row and pd.notna(row.get(field)):
-            items.append(f"{label} {format_score(row.get(field))}")
+    semantic_value = row.get("semantic_score")
+    similarity_value = row.get("similarity")
+    if positive_score(semantic_value):
+        items.append(("Semantic similarity", format_score(semantic_value)))
+    elif positive_score(similarity_value):
+        items.append(("Semantic similarity", format_score(similarity_value)))
+    if positive_score(row.get("bm25_score")):
+        items.append(("BM25 normalized", format_score(row.get("bm25_score"))))
+    if "rerank_score" in row and pd.notna(row.get("rerank_score")):
+        items.append(("Rerank", format_score(row.get("rerank_score"))))
+    if "distance" in row and pd.notna(row.get("distance")):
+        items.append(("Chroma distance", format_score(row.get("distance"))))
     return items
+
+
+def positive_score(value: Any) -> bool:
+    try:
+        return pd.notna(value) and float(value) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def active_filter_count(filters: SearchFilters) -> int:

@@ -57,20 +57,32 @@ class ColumnConfig:
     @classmethod
     def from_env(cls) -> "ColumnConfig":
         return cls(
-            claim_id=os.getenv("CLAIM_ID_COLUMN", cls.claim_id),
-            description=os.getenv("CLAIM_DESCRIPTION_COLUMN", cls.description),
-            line_of_business=os.getenv("LINE_OF_BUSINESS_COLUMN", cls.line_of_business),
-            claim_type=os.getenv("CLAIM_TYPE_COLUMN", cls.claim_type),
-            cause_of_loss=os.getenv("CAUSE_OF_LOSS_COLUMN", cls.cause_of_loss),
-            damaged_object=os.getenv("DAMAGED_OBJECT_COLUMN", cls.damaged_object),
-            country=os.getenv("COUNTRY_COLUMN", cls.country),
-            claim_status=os.getenv("CLAIM_STATUS_COLUMN", cls.claim_status),
-            loss_date=os.getenv("LOSS_DATE_COLUMN", cls.loss_date),
-            reserve_amount=os.getenv("RESERVE_AMOUNT_COLUMN", cls.reserve_amount),
-            paid_amount=os.getenv("PAID_AMOUNT_COLUMN", cls.paid_amount),
-            currency=os.getenv("CURRENCY_COLUMN", cls.currency),
-            policy_type=os.getenv("POLICY_TYPE_COLUMN", cls.policy_type),
+            claim_id=env_column("CLAIM_ID_COLUMN", cls.claim_id),
+            description=env_column("CLAIM_DESCRIPTION_COLUMN", cls.description),
+            line_of_business=env_column("LINE_OF_BUSINESS_COLUMN", cls.line_of_business),
+            claim_type=env_column("CLAIM_TYPE_COLUMN", cls.claim_type),
+            cause_of_loss=env_column("CAUSE_OF_LOSS_COLUMN", cls.cause_of_loss),
+            damaged_object=env_column("DAMAGED_OBJECT_COLUMN", cls.damaged_object),
+            country=env_column("COUNTRY_COLUMN", cls.country),
+            claim_status=env_column("CLAIM_STATUS_COLUMN", cls.claim_status),
+            loss_date=env_column("LOSS_DATE_COLUMN", cls.loss_date),
+            reserve_amount=env_column("RESERVE_AMOUNT_COLUMN", cls.reserve_amount),
+            paid_amount=env_column("PAID_AMOUNT_COLUMN", cls.paid_amount),
+            currency=env_column("CURRENCY_COLUMN", cls.currency),
+            policy_type=env_column("POLICY_TYPE_COLUMN", cls.policy_type),
         )
+
+    def validate_required(self) -> None:
+        missing = [
+            env_name
+            for attr, env_name in [
+                ("claim_id", "CLAIM_ID_COLUMN"),
+                ("description", "CLAIM_DESCRIPTION_COLUMN"),
+            ]
+            if not getattr(self, attr)
+        ]
+        if missing:
+            raise ValueError(f"Required column mapping(s) cannot be blank: {', '.join(missing)}")
 
     @property
     def selected_columns(self) -> list[str]:
@@ -94,7 +106,7 @@ class ColumnConfig:
 
     @property
     def embedding_columns(self) -> list[str]:
-        return [
+        columns = [
             self.description,
             self.line_of_business,
             self.claim_type,
@@ -102,6 +114,40 @@ class ColumnConfig:
             self.damaged_object,
             self.country,
         ]
+        return [column for column in columns if column]
+
+    def mapping_rows(self) -> list[dict[str, str]]:
+        rows = []
+        for label, env_name, attr, required in [
+            ("Claim ID", "CLAIM_ID_COLUMN", "claim_id", True),
+            ("Claim description", "CLAIM_DESCRIPTION_COLUMN", "description", True),
+            ("Line of business", "LINE_OF_BUSINESS_COLUMN", "line_of_business", False),
+            ("Claim type", "CLAIM_TYPE_COLUMN", "claim_type", False),
+            ("Cause of loss", "CAUSE_OF_LOSS_COLUMN", "cause_of_loss", False),
+            ("Damaged object", "DAMAGED_OBJECT_COLUMN", "damaged_object", False),
+            ("Country", "COUNTRY_COLUMN", "country", False),
+            ("Claim status", "CLAIM_STATUS_COLUMN", "claim_status", False),
+            ("Loss date", "LOSS_DATE_COLUMN", "loss_date", False),
+            ("Reserve amount", "RESERVE_AMOUNT_COLUMN", "reserve_amount", False),
+            ("Paid amount", "PAID_AMOUNT_COLUMN", "paid_amount", False),
+            ("Currency", "CURRENCY_COLUMN", "currency", False),
+            ("Policy type", "POLICY_TYPE_COLUMN", "policy_type", False),
+        ]:
+            source_column = getattr(self, attr)
+            rows.append(
+                {
+                    "role": label,
+                    "env_var": env_name,
+                    "source_column": source_column or "(skipped)",
+                    "required": "yes" if required else "no",
+                }
+            )
+        return rows
+
+
+def env_column(env_name: str, default: str) -> str:
+    value = os.getenv(env_name)
+    return default if value is None else value.strip()
 
 
 @dataclass(frozen=True)

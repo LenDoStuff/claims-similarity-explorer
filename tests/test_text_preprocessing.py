@@ -108,3 +108,32 @@ def test_prepare_claim_records_skips_blank_descriptions_and_counts_duplicates() 
     assert diagnostics["missing_claim_ids"] == 1
     assert diagnostics["duplicate_descriptions"] == 1
 
+
+def test_prepare_claim_records_supports_required_columns_only() -> None:
+    columns = ColumnConfig(
+        line_of_business="",
+        claim_type="",
+        cause_of_loss="",
+        damaged_object="",
+        country="",
+        claim_status="",
+        loss_date="",
+        reserve_amount="",
+        paid_amount="",
+        currency="",
+        policy_type="",
+    )
+    frame = pd.DataFrame([{"claim_id": "1", "claim_description": "Pipe leak in building."}])
+
+    records, diagnostics = prepare_claim_records(
+        frame,
+        columns,
+        model_name="model",
+        model_path="models/model",
+        embedding_version="v1",
+    )
+
+    assert diagnostics["indexed_rows"] == 1
+    assert records[0]["document"] == "Claim description: Pipe leak in building."
+    assert records[0]["metadata"]["claim_id"] == "1"
+    assert "line_of_business" not in records[0]["metadata"]

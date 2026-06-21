@@ -36,7 +36,25 @@ SNOWFLAKE_TABLE
 SNOWFLAKE_ROLE
 ```
 
-Optional column override variables are available for the Snowflake source columns. Defaults are defined in `src/config.py`.
+The Snowflake table must provide a claim ID and claim description. The polished result cards use a fixed claims metadata shape, but each source column can be mapped in `.env`:
+
+```text
+CLAIM_ID_COLUMN=claim_id
+CLAIM_DESCRIPTION_COLUMN=claim_description
+LINE_OF_BUSINESS_COLUMN=line_of_business
+CLAIM_TYPE_COLUMN=claim_type
+CAUSE_OF_LOSS_COLUMN=cause_of_loss
+DAMAGED_OBJECT_COLUMN=damaged_object
+COUNTRY_COLUMN=country
+CLAIM_STATUS_COLUMN=claim_status
+LOSS_DATE_COLUMN=loss_date
+RESERVE_AMOUNT_COLUMN=reserve_amount
+PAID_AMOUNT_COLUMN=paid_amount
+CURRENCY_COLUMN=currency
+POLICY_TYPE_COLUMN=policy_type
+```
+
+Only `CLAIM_ID_COLUMN` and `CLAIM_DESCRIPTION_COLUMN` are required. Set any optional metadata mapping to an empty value to skip selecting, embedding, filtering, and rendering that field.
 
 ## Build the Local Index
 

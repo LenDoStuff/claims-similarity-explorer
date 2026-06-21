@@ -18,6 +18,7 @@ def test_streamlit_model_dropdown_and_missing_index_message(monkeypatch, tmp_pat
     assert not app.exception
     assert any(tab.label == "Index Setup" for tab in app.tabs)
     assert any(subheader.value == "Index Setup" for subheader in app.subheader)
+    assert any("Snowflake column mapping" in markdown.value for markdown in app.markdown)
     model_select = next(select for select in app.selectbox if select.label == "Embedding model")
     assert "Multilingual E5 Small" in model_select.options
     assert model_select.value == "multilingual-e5-small"

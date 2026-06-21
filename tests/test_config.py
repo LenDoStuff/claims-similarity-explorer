@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from src.config import (
     AppConfig,
+    ColumnConfig,
     available_embedding_models,
     available_reranker_models,
     discover_embedding_models,
@@ -24,6 +27,27 @@ def test_model_specific_collection_and_artifact_names() -> None:
     assert config.index_manifest_path_for_model("multilingual-e5-small").name == "index_manifest_multilingual_e5_small.json"
     assert config.clusters_path_for_model("multilingual-e5-small").name == "clusters_multilingual_e5_small.json"
     assert config.cluster_map_path_for_model("multilingual-e5-small").name == "cluster_map_multilingual_e5_small.json"
+
+
+def test_column_config_allows_blank_optional_mappings(monkeypatch) -> None:
+    monkeypatch.setenv("LINE_OF_BUSINESS_COLUMN", "")
+    monkeypatch.setenv("CLAIM_TYPE_COLUMN", "")
+
+    columns = ColumnConfig.from_env()
+
+    assert "line_of_business" not in columns.selected_columns
+    assert "claim_type" not in columns.selected_columns
+    assert columns.selected_columns[:2] == ["claim_id", "claim_description"]
+    assert columns.embedding_columns == ["claim_description", "cause_of_loss", "damaged_object", "country"]
+    assert any(row["source_column"] == "(skipped)" for row in columns.mapping_rows())
+
+
+def test_column_config_rejects_blank_required_mappings() -> None:
+    with pytest.raises(ValueError, match="CLAIM_ID_COLUMN"):
+        ColumnConfig(claim_id="").validate_required()
+
+    with pytest.raises(ValueError, match="CLAIM_DESCRIPTION_COLUMN"):
+        ColumnConfig(description="").validate_required()
 
 
 def test_model_scanners_find_typed_subfolders(tmp_path) -> None:

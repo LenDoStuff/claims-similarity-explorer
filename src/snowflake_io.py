@@ -12,6 +12,7 @@ SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 
 def build_claims_query(snowflake: SnowflakeConfig, columns: ColumnConfig, *, limit: int | None = None) -> str:
+    columns.validate_required()
     selected = ", ".join(
         f"{source_identifier(column)} AS {quote_identifier(column)}" for column in columns.selected_columns
     )

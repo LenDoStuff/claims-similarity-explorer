@@ -111,6 +111,7 @@ def prepare_claim_records(
     model_path: str,
     embedding_version: str,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    columns.validate_required()
     records: list[dict[str, Any]] = []
     seen_descriptions: dict[str, int] = {}
     diagnostics = {
@@ -161,4 +162,3 @@ def prepare_claim_records(
 
     diagnostics["indexed_rows"] = len(records)
     return records, diagnostics
-

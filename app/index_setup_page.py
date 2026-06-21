@@ -17,6 +17,7 @@ def render_index_setup_page(config: AppConfig) -> None:
     embedding_models = available_embedding_models()
     reranker_models = available_reranker_models()
     render_model_tables(embedding_models, reranker_models)
+    render_column_mapping(config)
 
     try:
         snowflake = SnowflakeConfig.from_env()
@@ -29,6 +30,12 @@ def render_index_setup_page(config: AppConfig) -> None:
     if not embedding_models:
         st.info("Add local embedding models under `models/embeddings` before indexing.")
         return
+    try:
+        config.columns.validate_required()
+        column_error = None
+    except ValueError as exc:
+        st.warning(str(exc))
+        column_error = exc
 
     model_by_key = {model.key: model for model in embedding_models}
     default_index = next(
@@ -48,7 +55,7 @@ def render_index_setup_page(config: AppConfig) -> None:
     clicked = st.button(
         "Load or refresh index",
         type="primary",
-        disabled=snowflake is None,
+        disabled=snowflake is None or column_error is not None,
         use_container_width=True,
     )
     if not clicked:
@@ -78,6 +85,12 @@ def render_model_tables(embedding_models: list[Any], reranker_models: list[Any])
     with right:
         st.markdown("**Rerank models**")
         st.table(model_rows(reranker_models))
+
+
+def render_column_mapping(config: AppConfig) -> None:
+    st.markdown("**Snowflake column mapping**")
+    st.caption("Required mappings must be set. Optional mappings can be blank to skip the field.")
+    st.table(pd.DataFrame(config.columns.mapping_rows()))
 
 
 def model_rows(models: list[Any]) -> pd.DataFrame:
