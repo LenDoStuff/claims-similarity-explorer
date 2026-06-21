@@ -25,11 +25,17 @@ def main() -> None:
     )
     from src.config import AppConfig, get_embedding_model
     from src.diagnostics import read_json
+    from src.indexing import active_collection_name
 
     config = AppConfig.from_env()
     model_config = get_embedding_model(args.model_key or config.model_key)
     manifest = read_json(config.index_manifest_path_for_model(model_config.key))
-    collection_name = manifest.get("collection_name") or config.collection_name_for_model(model_config.key)
+    collection_name = active_collection_name(config, model_config.key, manifest)
+    if not collection_name:
+        raise RuntimeError(
+            f"No active hash-based index manifest collection is available for {model_config.key}. "
+            "Use Index Setup or run scripts/build_chroma_index.py first."
+        )
     collection = get_collection(config.chroma_dir, collection_name)
     ids, documents, metadatas, embeddings = load_cluster_input(collection)
     if len(ids) == 0:

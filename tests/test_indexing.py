@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from src.config import AppConfig, EmbeddingModelConfig
-from src.indexing import build_index_hash, model_fingerprint, records_dataset_hash
+from src.indexing import active_collection_name, build_index_hash, model_fingerprint, records_dataset_hash
 from src.indexing import build_index_from_frame
 
 
@@ -53,6 +53,22 @@ def test_index_hash_changes_with_dataset_or_model() -> None:
     first = build_index_hash(**base)
     assert build_index_hash(**{**base, "dataset_hash": "dataset-b"}) != first
     assert build_index_hash(**{**base, "model_fingerprint": "model-b"}) != first
+
+
+def test_active_collection_name_requires_manifest_collection() -> None:
+    config = AppConfig()
+
+    assert active_collection_name(config, "multilingual-e5-small", {}) is None
+    assert active_collection_name(config, "multilingual-e5-small", {"collection_name": ""}) is None
+    assert active_collection_name(config, "multilingual-e5-small", {"collection_name": "claims_active"}) is None
+    assert (
+        active_collection_name(
+            config,
+            "multilingual-e5-small",
+            {"collection_name": "claims_active", "index_hash": "abc123"},
+        )
+        == "claims_active"
+    )
 
 
 def test_build_index_from_frame_reuses_current_collection(monkeypatch, tmp_path) -> None:

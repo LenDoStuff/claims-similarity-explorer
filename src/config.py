@@ -179,21 +179,6 @@ class AppConfig:
             embedding_version=os.getenv("EMBEDDING_VERSION", DEFAULT_EMBEDDING_VERSION),
         )
 
-    @property
-    def index_manifest_path(self) -> Path:
-        return self.artifacts_dir / "index_manifest.json"
-
-    @property
-    def clusters_path(self) -> Path:
-        return self.artifacts_dir / "clusters.json"
-
-    @property
-    def cluster_map_path(self) -> Path:
-        return self.artifacts_dir / "cluster_map.json"
-
-    def collection_name_for_model(self, model_key: str) -> str:
-        return model_collection_name(self.collection_name, model_key)
-
     def index_manifest_path_for_model(self, model_key: str) -> Path:
         return self.artifacts_dir / f"index_manifest_{model_storage_key(model_key)}.json"
 

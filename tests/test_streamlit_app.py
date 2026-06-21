@@ -78,7 +78,9 @@ def test_streamlit_cluster_explorer_tabs_and_review_controls_render(monkeypatch,
     monkeypatch.setenv("CHROMA_DB_DIR", str(tmp_path / "chroma"))
     monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path / "artifacts"))
     config = AppConfig.from_env()
-    collection = reset_collection(config.chroma_dir, config.collection_name_for_model("multilingual-e5-small"))
+    collection_name = "claims_multilingual_e5_small_cluster_test"
+    index_hash = "active-cluster-test"
+    collection = reset_collection(config.chroma_dir, collection_name)
     collection.upsert(
         ids=["1", "2"],
         documents=[
@@ -117,6 +119,18 @@ def test_streamlit_cluster_explorer_tabs_and_review_controls_render(monkeypatch,
         ],
         embeddings=[[1.0, 0.0], [0.9, 0.1]],
     )
+    manifest_path = config.index_manifest_path_for_model("multilingual-e5-small")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "collection_name": collection_name,
+                "record_count": 2,
+                "index_hash": index_hash,
+            }
+        ),
+        encoding="utf-8",
+    )
     clusters_path = config.clusters_path_for_model("multilingual-e5-small")
     clusters_path.parent.mkdir(parents=True, exist_ok=True)
     clusters_path.write_text(
@@ -125,6 +139,7 @@ def test_streamlit_cluster_explorer_tabs_and_review_controls_render(monkeypatch,
                 "algorithm": "kmeans",
                 "n_clusters": 1,
                 "clustered_at_utc": "2026-06-19T00:00:00Z",
+                "index_hash": index_hash,
                 "clusters": [
                     {
                         "cluster_id": 0,
@@ -146,6 +161,7 @@ def test_streamlit_cluster_explorer_tabs_and_review_controls_render(monkeypatch,
         json.dumps(
             {
                 "projection": {"method": "UMAP", "metric": "cosine", "random_state": 42, "n_neighbors": 2},
+                "index_hash": index_hash,
                 "points": [
                     {
                         "claim_id": "1",
@@ -186,7 +202,9 @@ def test_streamlit_cluster_map_missing_artifact_message(monkeypatch, tmp_path) -
     monkeypatch.setenv("CHROMA_DB_DIR", str(tmp_path / "chroma"))
     monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path / "artifacts"))
     config = AppConfig.from_env()
-    collection = reset_collection(config.chroma_dir, config.collection_name_for_model("multilingual-e5-small"))
+    collection_name = "claims_multilingual_e5_small_missing_map_test"
+    index_hash = "active-missing-map-test"
+    collection = reset_collection(config.chroma_dir, collection_name)
     collection.upsert(
         ids=["1"],
         documents=["Claim description: water leakage in warehouse"],
@@ -207,6 +225,18 @@ def test_streamlit_cluster_map_missing_artifact_message(monkeypatch, tmp_path) -
         ],
         embeddings=[[1.0, 0.0]],
     )
+    manifest_path = config.index_manifest_path_for_model("multilingual-e5-small")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "collection_name": collection_name,
+                "record_count": 1,
+                "index_hash": index_hash,
+            }
+        ),
+        encoding="utf-8",
+    )
     clusters_path = config.clusters_path_for_model("multilingual-e5-small")
     clusters_path.parent.mkdir(parents=True, exist_ok=True)
     clusters_path.write_text(
@@ -215,6 +245,7 @@ def test_streamlit_cluster_map_missing_artifact_message(monkeypatch, tmp_path) -
                 "algorithm": "kmeans",
                 "n_clusters": 1,
                 "clustered_at_utc": "2026-06-19T00:00:00Z",
+                "index_hash": index_hash,
                 "clusters": [
                     {
                         "cluster_id": 0,

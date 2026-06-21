@@ -75,8 +75,8 @@ def render_embedding_model_smoke_test(selected_model: EmbeddingModelConfig) -> N
     st.dataframe(pd.DataFrame([model_status_row(model) for model in models]), use_container_width=True, hide_index=True)
     st.caption(f"Smoke test uses the active model: `{selected_model.repo_id}`.")
 
-    sample_text = st.text_input("Dummy text", "Rohrbruch verursachte Wasserschaden in einer Lagerhalle.")
-    if st.button("Load local model and embed dummy text"):
+    sample_text = st.text_input("Sample text", "Rohrbruch verursachte Wasserschaden in einer Lagerhalle.")
+    if st.button("Load local model and embed sample text"):
         start = time.perf_counter()
         try:
             from src.embeddings import load_embedding_model
@@ -87,7 +87,7 @@ def render_embedding_model_smoke_test(selected_model: EmbeddingModelConfig) -> N
             st.error(f"Model smoke test failed: {exc}")
             return
         elapsed = time.perf_counter() - start
-        st.success("Local model loaded and embedded the dummy text.")
+        st.success("Local model loaded and embedded the sample text.")
         st.json(
             {
                 "model_key": selected_model.key,

@@ -215,7 +215,7 @@ def render_cluster_map_tab(
     st.subheader("Cluster Map")
     points = pd.DataFrame(cluster_map.get("points", []))
     if points.empty:
-        st.info("No cluster map artifact is available. Run `python scripts/seed_dummy_chroma.py --all-models`.")
+        st.info("No cluster map artifact is available. Build clusters separately for the active index.")
         return
     if frame.empty or "claim_id" not in frame:
         st.info("No claims match the current filters.")

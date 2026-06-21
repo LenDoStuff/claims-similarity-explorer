@@ -4,7 +4,6 @@ import re
 from typing import Any
 
 import pandas as pd
-import snowflake.connector
 
 from src.config import ColumnConfig, SnowflakeConfig, quote_identifier
 
@@ -36,7 +35,22 @@ def load_claims_from_snowflake(
     *,
     limit: int | None = None,
 ) -> pd.DataFrame:
-    connection_kwargs: dict[str, Any] = {
+    query = build_claims_query(snowflake, columns, limit=limit)
+    session = create_snowpark_session(snowflake)
+    try:
+        return session.sql(query).to_pandas()
+    finally:
+        session.close()
+
+
+def create_snowpark_session(snowflake: SnowflakeConfig) -> Any:
+    from snowflake.snowpark import Session
+
+    return Session.builder.configs(snowpark_connection_parameters(snowflake)).create()
+
+
+def snowpark_connection_parameters(snowflake: SnowflakeConfig) -> dict[str, Any]:
+    parameters: dict[str, Any] = {
         "account": snowflake.account,
         "user": snowflake.user,
         "password": snowflake.password,
@@ -45,8 +59,5 @@ def load_claims_from_snowflake(
         "schema": snowflake.schema,
     }
     if snowflake.role:
-        connection_kwargs["role"] = snowflake.role
-
-    query = build_claims_query(snowflake, columns, limit=limit)
-    with snowflake.connector.connect(**connection_kwargs) as conn:
-        return pd.read_sql(query, conn)
+        parameters["role"] = snowflake.role
+    return parameters

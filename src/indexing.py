@@ -180,8 +180,11 @@ def build_index_hash(
     )
 
 
-def active_collection_name(config: AppConfig, model_key: str, manifest: dict[str, Any]) -> str:
-    return str(manifest.get("collection_name") or config.collection_name_for_model(model_key))
+def active_collection_name(config: AppConfig, model_key: str, manifest: dict[str, Any]) -> str | None:
+    if not manifest.get("index_hash"):
+        return None
+    collection_name = manifest.get("collection_name")
+    return str(collection_name) if collection_name else None
 
 
 def collection_has_count(config: AppConfig, collection_name: str, expected_count: int) -> bool:

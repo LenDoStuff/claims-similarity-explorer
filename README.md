@@ -2,7 +2,7 @@
 
 Python + Streamlit MVP for local semantic search and exploratory clustering of insurance claims.
 
-Snowflake is the source for ingestion only. After indexing, the app reads claim documents, embeddings, and metadata from local persistent ChromaDB.
+Snowflake is the source for ingestion only, accessed with Snowpark Python. After indexing, the app reads claim documents, embeddings, and metadata from local persistent ChromaDB.
 
 ## Setup
 
@@ -46,7 +46,7 @@ python scripts/build_chroma_index.py
 
 This loads Snowflake rows, hashes the prepared records and selected model folder, then reuses an existing matching Chroma collection or builds a new versioned collection:
 
-- Loads selected columns from Snowflake.
+- Loads selected columns from Snowflake through Snowpark Python.
 - Cleans claim text.
 - Builds event-focused embedding text.
 - Embeds with `models/embeddings/multilingual-e5-small/` by default.
@@ -72,28 +72,6 @@ python scripts/build_clusters.py --clusters 12
 
 This reads embeddings from the active Chroma collection for the selected embedding model, assigns KMeans cluster IDs, updates Chroma metadata, and writes per-model cluster artifacts.
 
-## Seed Dummy Demo Data
-
-For a local demo without Snowflake, seed ChromaDB with synthetic German and English claims:
-
-```powershell
-python scripts/seed_dummy_chroma.py --all-models
-```
-
-This rebuilds one local collection per discovered embedding model in `chroma_db/`, embeds 32 dummy claims with each model, assigns KMeans clusters, and writes per-model demo artifacts:
-
-```text
-claims_multilingual_e5_small_<hash>
-
-artifacts/index_manifest_multilingual_e5_small.json
-```
-
-A single dummy index can also be rebuilt:
-
-```powershell
-python scripts/seed_dummy_chroma.py --model-key multilingual-e5-small
-```
-
 ## Run the App
 
 ```powershell
@@ -102,11 +80,12 @@ streamlit run app/streamlit_app.py
 
 Pages:
 
+- Index Setup
 - Similar Claims Search
 - Cluster Explorer
 - Data & Embedding Diagnostics
 
-The embedding model dropdown switches between the prebuilt local indexes. The search page also supports semantic, BM25, and hybrid retrieval modes, plus optional local cross-encoder reranking. The diagnostics page includes a local smoke-test button for the active embedding model.
+The embedding model dropdown switches between local models with active hash-based manifests. The search page supports semantic, BM25, and hybrid retrieval modes, plus optional local cross-encoder reranking. The diagnostics page includes a local smoke-test button for the active embedding model.
 
 ## Tests
 

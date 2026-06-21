@@ -21,7 +21,6 @@ def test_model_specific_collection_and_artifact_names() -> None:
 
     assert model_collection_name("claims", "multilingual-e5-base") == "claims_multilingual_e5_base"
     assert versioned_collection_name("claims", "multilingual-e5-base", "abcdef1234567890") == "claims_multilingual_e5_base_abcdef123456"
-    assert config.collection_name_for_model("multilingual-e5-large") == "claims_multilingual_e5_large"
     assert config.index_manifest_path_for_model("multilingual-e5-small").name == "index_manifest_multilingual_e5_small.json"
     assert config.clusters_path_for_model("multilingual-e5-small").name == "clusters_multilingual_e5_small.json"
     assert config.cluster_map_path_for_model("multilingual-e5-small").name == "cluster_map_multilingual_e5_small.json"
@@ -49,7 +48,7 @@ def test_available_models_use_typed_model_dirs(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MODELS_DIR", str(tmp_path))
 
     config = AppConfig()
-    collection_names = [config.collection_name_for_model(model.key) for model in available_embedding_models()]
+    collection_names = [model_collection_name(config.collection_name, model.key) for model in available_embedding_models()]
 
     assert collection_names == ["claims_embedding_a", "claims_embedding_b"]
     assert [model.key for model in available_reranker_models()] == ["reranker-a"]

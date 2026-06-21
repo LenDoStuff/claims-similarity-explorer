@@ -7,7 +7,7 @@ import streamlit as st
 
 from src.config import AppConfig, SnowflakeConfig, available_embedding_models, available_reranker_models
 from src.diagnostics import read_json
-from src.indexing import build_index_from_snowflake
+from src.indexing import active_collection_name, build_index_from_snowflake
 
 
 def render_index_setup_page(config: AppConfig) -> None:
@@ -43,7 +43,7 @@ def render_index_setup_page(config: AppConfig) -> None:
     )
     selected_model = model_by_key[selected_key]
     manifest = read_json(config.index_manifest_path_for_model(selected_model.key))
-    render_active_index_summary(manifest)
+    render_active_index_summary(config, selected_model.key, manifest)
 
     clicked = st.button(
         "Load or refresh index",
@@ -67,7 +67,7 @@ def render_index_setup_page(config: AppConfig) -> None:
         st.success("Matching Chroma collection already exists and is now active.")
     else:
         st.success("Index built and saved in Chroma.")
-    render_active_index_summary(result.manifest)
+    render_active_index_summary(config, selected_model.key, result.manifest)
 
 
 def render_model_tables(embedding_models: list[Any], reranker_models: list[Any]) -> None:
@@ -92,9 +92,9 @@ def model_rows(models: list[Any]) -> pd.DataFrame:
     return pd.DataFrame(rows or [{"key": "", "label": "No models found", "local_path": ""}])
 
 
-def render_active_index_summary(manifest: dict[str, Any]) -> None:
-    if not manifest:
-        st.info("No active index manifest exists for this embedding model yet.")
+def render_active_index_summary(config: AppConfig, model_key: str, manifest: dict[str, Any]) -> None:
+    if not active_collection_name(config, model_key, manifest):
+        st.info("No active hash-based index manifest exists for this embedding model yet.")
         return
     st.json(
         {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 
@@ -34,6 +35,7 @@ st.set_page_config(
 
 def main() -> None:
     inject_css()
+    load_dotenv_if_available()
     config = AppConfig.from_env()
 
     st.title("Claims Similarity Explorer")
@@ -58,13 +60,16 @@ def main() -> None:
         if selected_model is not None:
             manifest = read_json(config.index_manifest_path_for_model(selected_model.key))
             collection_name = active_collection_name(config, selected_model.key, manifest)
-            collection = get_collection(config.chroma_dir, collection_name)
-            claims_frame = load_claims_frame(
-                str(config.chroma_dir),
-                collection_name,
-                local_data_version(config, selected_model.key),
-            )
-            clusters, cluster_map = read_cluster_artifacts(config, selected_model.key, manifest)
+            if collection_name:
+                collection = get_collection(config.chroma_dir, collection_name)
+                claims_frame = load_claims_frame(
+                    str(config.chroma_dir),
+                    collection_name,
+                    local_data_version(config, selected_model.key),
+                )
+                clusters, cluster_map = read_cluster_artifacts(config, selected_model.key, manifest)
+            else:
+                claims_frame = pd.DataFrame()
             render_search_page(config, selected_model, collection, claims_frame, manifest)
     with cluster_tab:
         if selected_model is None or claims_frame is None:
@@ -72,8 +77,10 @@ def main() -> None:
         else:
             render_cluster_page(config, selected_model, claims_frame, clusters, cluster_map)
     with diagnostics_tab:
-        if selected_model is None or collection is None or claims_frame is None:
+        if selected_model is None:
             st.info("Select an embedding model in Similar Claims Search first.")
+        elif collection is None or claims_frame is None:
+            st.info("Open Index Setup and click `Load or refresh index` before viewing diagnostics.")
         else:
             render_diagnostics_page(config, selected_model, collection_name, collection, claims_frame, manifest, clusters)
 
@@ -85,6 +92,14 @@ def read_cluster_artifacts(config: AppConfig, model_key: str, manifest: dict) ->
     if index_hash and clusters.get("index_hash") != index_hash:
         return {}, {}
     return clusters, cluster_map
+
+
+def load_dotenv_if_available() -> None:
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(PROJECT_ROOT / ".env")
 
 
 if __name__ == "__main__":

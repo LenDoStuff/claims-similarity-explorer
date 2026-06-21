@@ -50,7 +50,7 @@ def render_search_page(
     manifest: dict[str, Any],
 ) -> None:
     if claims_frame.empty:
-        if manifest.get("collection_name"):
+        if manifest.get("collection_name") and manifest.get("index_hash"):
             st.info(
                 f"The active Chroma collection for {selected_model.label} has no claims. "
                 "Open Index Setup and click `Load or refresh index`."
@@ -69,7 +69,7 @@ def render_search_page(
     top_n, retrieval_mode, keyword_algorithm, semantic_weight, candidate_pool, reranker_model, rerank_top_k = render_search_controls()
 
     st.subheader("Search")
-    st.caption(f"Using `{index_model_name}` from `{manifest.get('collection_name', config.collection_name_for_model(selected_model.key))}`.")
+    st.caption(f"Using `{index_model_name}` from `{manifest.get('collection_name', '')}`.")
     query_source = st.radio("Query source", ["Free text", "Existing claim"], horizontal=True)
     selected_claim = None
     query_text = ""
