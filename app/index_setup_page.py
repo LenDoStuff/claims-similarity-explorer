@@ -5,18 +5,31 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from src.config import AppConfig, available_embedding_models, available_reranker_models
-from src.diagnostics import read_json
-from src.indexing import active_collection_name, build_index_from_snowflake
+from src.config import AppConfig, DEFAULT_EMBEDDING_MODEL, available_embedding_models
+from src.indexing import initialize_embeddings
+from src.snowflake_io import get_embedding_table_status
 
 
-def render_index_setup_page(config: AppConfig) -> None:
+def render_index_setup_page(session: Any, config: AppConfig) -> None:
     st.subheader("Index Setup")
-    st.caption("Load Snowflake claims once, embed them with a local model, and save the index in Chroma.")
+    st.caption("Load claims with Snowpark, embed them with Snowflake Cortex, and save vectors in Snowflake.")
 
-    embedding_models = available_embedding_models()
-    reranker_models = available_reranker_models()
-    render_model_tables(embedding_models, reranker_models)
+    models = available_embedding_models()
+    st.markdown("**Snowflake embedding models**")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "model": model.key,
+                    "dimensions": model.dimensions,
+                    "language": model.language,
+                }
+                for model in models
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
     render_column_mapping(config)
 
     try:
@@ -26,97 +39,65 @@ def render_index_setup_page(config: AppConfig) -> None:
         source_error = exc
     else:
         source_error = None
-        st.success(f"Snowflake table configured in `app_config.toml`: `{config.snowflake_table}`")
+        st.success(f"Snowflake source table: `{config.snowflake_table}`")
+        st.caption(f"Embedding table: `{config.embedding_table}`")
         if config.snowflake_row_limit:
-            st.caption(f"Indexing uses a random Snowflake sample of `{config.snowflake_row_limit}` rows.")
+            st.caption(f"Initialization uses a random sample of `{config.snowflake_row_limit}` rows.")
         else:
-            st.caption("Indexing loads all rows from the configured Snowflake table.")
-        st.caption("Snowpark uses the default local Snowflake connection from `connections.toml`.")
+            st.caption("Initialization loads all rows from the configured Snowflake table.")
 
-    if not embedding_models:
-        st.info("Add local embedding models under `models/embeddings` before indexing.")
-        return
-
-    model_by_key = {model.key: model for model in embedding_models}
-    default_index = next(
-        (index for index, model in enumerate(embedding_models) if model.key == config.model_key),
-        0,
+    selected_models = st.multiselect(
+        "Embedding models",
+        options=[model.key for model in models],
+        default=[DEFAULT_EMBEDDING_MODEL],
     )
-    selected_key = st.selectbox(
-        "Embedding model to index",
-        options=[model.key for model in embedding_models],
-        index=default_index,
-        format_func=lambda key: model_by_key[key].label,
-    )
-    selected_model = model_by_key[selected_key]
-    manifest = read_json(config.index_manifest_path_for_model(selected_model.key))
-    render_active_index_summary(config, selected_model.key, manifest)
+    render_embedding_table_status(session, config)
 
     clicked = st.button(
-        "Load or refresh index",
+        "Initialize or replace embeddings",
         type="primary",
-        disabled=source_error is not None,
+        disabled=source_error is not None or not selected_models,
         use_container_width=True,
     )
     if not clicked:
         return
 
-    with st.spinner("Loading claims and preparing the Chroma index..."):
+    with st.spinner("Building Snowflake embeddings..."):
         try:
-            result = build_index_from_snowflake(config, selected_model)
+            result = initialize_embeddings(session, config, selected_models)
         except Exception as exc:
-            st.error(f"Index build failed: {exc}")
+            st.error(f"Embedding initialization failed: {exc}")
             return
 
-    if result.status == "current":
-        st.success("Index is current. Existing Chroma collection was reused.")
-    elif result.status == "activated_existing":
-        st.success("Matching Chroma collection already exists and is now active.")
-    else:
-        st.success("Index built and saved in Chroma.")
-    render_active_index_summary(config, selected_model.key, result.manifest)
-
-
-def render_model_tables(embedding_models: list[Any], reranker_models: list[Any]) -> None:
-    left, right = st.columns(2)
-    with left:
-        st.markdown("**Embedding models**")
-        st.table(model_rows(embedding_models))
-    with right:
-        st.markdown("**Rerank models**")
-        st.table(model_rows(reranker_models))
+    st.success(
+        f"Saved {result.row_count:,} claims to `{result.table_name}` "
+        f"with {len(result.models)} embedding model(s)."
+    )
+    render_embedding_table_status(session, config)
 
 
 def render_column_mapping(config: AppConfig) -> None:
     st.markdown("**Snowflake column mapping**")
     st.caption("Mappings are read from `app_config.toml`; credentials stay in your local Snowflake files.")
-    st.table(pd.DataFrame(config.columns.mapping_rows()))
+    st.dataframe(pd.DataFrame(config.columns.mapping_rows()), use_container_width=True, hide_index=True)
 
 
-def model_rows(models: list[Any]) -> pd.DataFrame:
-    rows = [
-        {
-            "key": model.key,
-            "label": model.label,
-            "local_path": str(model.model_dir),
-        }
-        for model in models
-    ]
-    return pd.DataFrame(rows or [{"key": "", "label": "No models found", "local_path": ""}])
-
-
-def render_active_index_summary(config: AppConfig, model_key: str, manifest: dict[str, Any]) -> None:
-    if not active_collection_name(config, model_key, manifest):
-        st.info("No active hash-based index manifest exists for this embedding model yet.")
+def render_embedding_table_status(session: Any, config: AppConfig) -> None:
+    try:
+        status = get_embedding_table_status(session, config)
+    except Exception as exc:
+        st.warning(f"Could not inspect `{config.embedding_table}`: {exc}")
+        return
+    if status is None:
+        st.info(
+            "No accessible Snowflake embedding table exists yet. "
+            "If it already exists, verify that the active role can access it."
+        )
         return
     st.json(
         {
-            "collection_name": manifest.get("collection_name"),
-            "record_count": manifest.get("record_count"),
-            "index_hash": manifest.get("index_hash"),
-            "dataset_hash": manifest.get("dataset_hash"),
-            "model_fingerprint": manifest.get("model_fingerprint"),
-            "refreshed_at_utc": manifest.get("refreshed_at_utc"),
-            "refresh_strategy": manifest.get("refresh_strategy"),
+            "table": status.table_name,
+            "record_count": status.row_count,
+            "models": [model.key for model in status.models],
         }
     )

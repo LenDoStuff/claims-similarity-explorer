@@ -1,112 +1,62 @@
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
+import pytest
 
-from src.config import AppConfig, EmbeddingModelConfig
-from src.indexing import active_collection_name, build_index_hash, model_fingerprint, records_dataset_hash
-from src.indexing import build_index_from_frame
+from src.config import AppConfig, ColumnConfig
+from src.indexing import initialize_embeddings
 
 
-def test_records_dataset_hash_is_stable_and_content_sensitive() -> None:
-    records = [
-        {"id": "2", "document": "fire", "metadata": {"country": "DE"}},
-        {"id": "1", "document": "water", "metadata": {"country": "AT"}},
-    ]
-    reordered = list(reversed(records))
-    changed = [
-        {"id": "2", "document": "fire", "metadata": {"country": "DE"}},
-        {"id": "1", "document": "water damage", "metadata": {"country": "AT"}},
-    ]
+class FakeWriter:
+    def __init__(self, calls: dict) -> None:
+        self.calls = calls
 
-    assert records_dataset_hash(records) == records_dataset_hash(reordered)
-    assert records_dataset_hash(records) != records_dataset_hash(changed)
+    def mode(self, mode: str):
+        self.calls["mode"] = mode
+        return self
+
+    def save_as_table(self, table_name: str) -> None:
+        self.calls["saved_table"] = table_name
 
 
-def test_model_fingerprint_ignores_cache_and_tracks_model_files(tmp_path) -> None:
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
-    (model_dir / "config.json").write_text("{}", encoding="utf-8")
-    first = model_fingerprint(model_dir)
-    cache_dir = model_dir / ".cache"
-    cache_dir.mkdir()
-    (cache_dir / "ignored.bin").write_text("changed", encoding="utf-8")
+class FakeFrame:
+    def __init__(self, calls: dict, count: int) -> None:
+        self.calls = calls
+        self._count = count
+        self.write = FakeWriter(calls)
 
-    assert model_fingerprint(model_dir) == first
-
-    (model_dir / "config.json").write_text('{"changed": true}', encoding="utf-8")
-
-    assert model_fingerprint(model_dir) != first
+    def count(self) -> int:
+        return self._count
 
 
-def test_index_hash_changes_with_dataset_or_model() -> None:
-    base = {
-        "source": "snowflake",
-        "source_identity": '"DB"."SCHEMA"."CLAIMS"',
-        "selected_columns": ["claim_id", "claim_description"],
-        "dataset_hash": "dataset-a",
-        "model_key": "multilingual-e5-small",
-        "model_fingerprint": "model-a",
-        "embedding_version": "e5-v1",
-    }
-
-    first = build_index_hash(**base)
-    assert build_index_hash(**{**base, "dataset_hash": "dataset-b"}) != first
-    assert build_index_hash(**{**base, "model_fingerprint": "model-b"}) != first
-
-
-def test_active_collection_name_requires_manifest_collection() -> None:
-    config = AppConfig()
-
-    assert active_collection_name(config, "multilingual-e5-small", {}) is None
-    assert active_collection_name(config, "multilingual-e5-small", {"collection_name": ""}) is None
-    assert active_collection_name(config, "multilingual-e5-small", {"collection_name": "claims_active"}) is None
-    assert (
-        active_collection_name(
-            config,
-            "multilingual-e5-small",
-            {"collection_name": "claims_active", "index_hash": "abc123"},
-        )
-        == "claims_active"
+def config() -> AppConfig:
+    return AppConfig(
+        columns=ColumnConfig(claim_id="CLAIM_ID", description="DESCRIPTION"),
+        snowflake_table="DB.SCHEMA.CLAIMS",
     )
 
 
-def test_build_index_from_frame_reuses_current_collection(monkeypatch, tmp_path) -> None:
-    model_dir = tmp_path / "models" / "embeddings" / "test-embedding"
-    model_dir.mkdir(parents=True)
-    (model_dir / "config.json").write_text("{}", encoding="utf-8")
-    config = AppConfig(chroma_dir=tmp_path / "chroma", artifacts_dir=tmp_path / "artifacts")
-    model_config = EmbeddingModelConfig(
-        key="test-embedding",
-        label="Test Embedding",
-        repo_id="test-embedding",
-        model_dir=model_dir,
-        notes="",
-    )
-    frame = pd.DataFrame(
-        [
-            {
-                "claim_id": "1",
-                "claim_description": "Water leakage in warehouse",
-                "line_of_business": "Property",
-                "claim_type": "Water Damage",
-                "cause_of_loss": "Leakage",
-                "damaged_object": "Stock",
-                "country": "DE",
-            }
-        ]
-    )
+def test_initialize_embeddings_overwrites_derived_table(monkeypatch) -> None:
+    calls = {}
+    base = FakeFrame(calls, 12)
+    embedded = FakeFrame(calls, 12)
+    monkeypatch.setattr("src.indexing.prepare_claims_frame", lambda *args, **kwargs: base)
+    monkeypatch.setattr("src.indexing.add_embedding_columns", lambda frame, models: embedded)
 
-    class FakeModel:
-        def encode_passages(self, texts: list[str], *, batch_size: int = 64) -> np.ndarray:
-            return np.asarray([[1.0, 0.0] for _ in texts], dtype=np.float32)
+    result = initialize_embeddings(object(), config(), ["voyage-multilingual-2", "e5-base-v2"])
 
-    monkeypatch.setattr("src.embeddings.load_embedding_model", lambda *args, **kwargs: FakeModel())
+    assert calls["mode"] == "overwrite"
+    assert calls["saved_table"] == "DB.SCHEMA.CLAIMS_EMBEDDINGS"
+    assert result.row_count == 12
+    assert result.models == ["voyage-multilingual-2", "e5-base-v2"]
 
-    first = build_index_from_frame(config, model_config, frame, source="test", source_identity="claims")
-    second = build_index_from_frame(config, model_config, frame, source="test", source_identity="claims")
 
-    assert first.status == "rebuilt"
-    assert second.status == "current"
-    assert first.collection_name == second.collection_name
-    assert first.manifest["record_count"] == 1
+def test_initialize_embeddings_requires_models() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        initialize_embeddings(object(), config(), [])
+
+
+def test_initialize_embeddings_rejects_empty_prepared_data(monkeypatch) -> None:
+    monkeypatch.setattr("src.indexing.prepare_claims_frame", lambda *args, **kwargs: FakeFrame({}, 0))
+
+    with pytest.raises(RuntimeError, match="No claims"):
+        initialize_embeddings(object(), config(), ["voyage-multilingual-2"])

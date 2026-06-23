@@ -6,90 +6,77 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from src.config import (
-    AppConfig,
-    EmbeddingModelConfig,
-    RerankerModelConfig,
-    available_embedding_models,
-    available_reranker_models,
-)
+from src.config import EmbeddingModelConfig
 from src.similarity_search import (
+    SIMILARITY_METRICS,
     SearchFilters,
-    apply_rerank_scores,
-    merge_search_candidates,
-    query_bm25_candidates,
+    SimilarityMetric,
     query_similar_claims,
 )
+from src.snowflake_io import get_claim_document
 from src.text_preprocessing import clean_text
 
 
-def render_search_model_selector(config: AppConfig) -> EmbeddingModelConfig | None:
+def render_search_configuration(
+    models: list[EmbeddingModelConfig],
+) -> tuple[EmbeddingModelConfig, SimilarityMetric]:
     st.subheader("Search Configuration")
-    models = available_embedding_models()
-    if not models:
-        st.warning("No local embedding models were found in `models/embeddings`.")
-        return None
-    default_index = next(
-        (index for index, model in enumerate(models) if model.key == config.model_key),
-        0,
+    model_column, metric_column = st.columns(2)
+    with model_column:
+        selected_model_key = st.selectbox(
+            "Embedding model",
+            options=[model.key for model in models],
+            format_func=lambda key: next(model.label for model in models if model.key == key),
+        )
+    with metric_column:
+        selected_metric_key = st.selectbox(
+            "Similarity metric",
+            options=[metric.key for metric in SIMILARITY_METRICS],
+            format_func=lambda key: next(metric.label for metric in SIMILARITY_METRICS if metric.key == key),
+        )
+    return (
+        next(model for model in models if model.key == selected_model_key),
+        next(metric for metric in SIMILARITY_METRICS if metric.key == selected_metric_key),
     )
-    selected_key = st.selectbox(
-        "Embedding model",
-        options=[model.key for model in models],
-        index=default_index,
-        format_func=lambda key: next(model.label for model in models if model.key == key),
-    )
-    return next(model for model in models if model.key == selected_key)
 
 
 def render_search_page(
-    config: AppConfig,
+    session: Any,
+    table_name: str,
     selected_model: EmbeddingModelConfig,
-    collection: Any,
-    claims_frame: pd.DataFrame,
-    manifest: dict[str, Any],
+    selected_metric: SimilarityMetric,
+    options: dict[str, Any],
 ) -> None:
-    if claims_frame.empty:
-        if manifest.get("collection_name") and manifest.get("index_hash"):
-            st.info(
-                f"The active Chroma collection for {selected_model.label} is missing or has no claims. "
-                "Open Index Setup and click `Load or refresh index`."
-            )
-        else:
-            st.info(
-                f"No active Chroma index is available for {selected_model.label}. "
-                "Open Index Setup and click `Load or refresh index`."
-            )
-        return
+    filters = render_filters(options)
 
-    filters = render_filters(claims_frame)
-    index_model_name = selected_model.repo_id
-    index_model_path = selected_model.model_dir
-
-    top_n, retrieval_mode, keyword_algorithm, semantic_weight, candidate_pool, reranker_model, rerank_top_k = render_search_controls()
+    top_n = st.slider("Top results", min_value=5, max_value=50, value=10, step=5)
 
     st.subheader("Search")
-    st.caption(f"Using `{index_model_name}` from `{manifest.get('collection_name', '')}`.")
+    st.caption(
+        f"Using `{selected_model.key}` with {selected_metric.label.lower()} "
+        f"from `{table_name}`."
+    )
     query_source = st.radio("Query source", ["Free text", "Existing claim"], horizontal=True)
     selected_claim = None
     query_text = ""
     if query_source == "Free text":
         query_text = st.text_area("Free-text claim description", height=130)
     else:
-        selected_claim = existing_claim_selector(claims_frame)
+        selected_claim = existing_claim_selector(options["claims"])
     search_clicked = st.button("Search", type="primary", use_container_width=True)
 
     source_claim_id = None
     search_text = clean_text(query_text)
-    if query_source == "Existing claim" and selected_claim:
-        source_row = claims_frame[claims_frame["claim_id"] == selected_claim].head(1)
-        if not source_row.empty:
-            source_claim_id = selected_claim
-            search_text = clean_text(source_row.iloc[0].get("document"))
-
     if not search_clicked:
         st.info("Enter a claim description or select an existing claim, then run search.")
         return
+    if query_source == "Existing claim" and selected_claim:
+        source_claim_id = selected_claim
+        try:
+            search_text = clean_text(get_claim_document(session, table_name, selected_claim))
+        except Exception as exc:
+            st.error(f"Could not load the selected claim from Snowflake: {exc}")
+            return
     if not search_text:
         if query_source == "Free text":
             st.warning("Provide free text.")
@@ -98,46 +85,16 @@ def render_search_page(
         return
 
     try:
-        semantic_results = pd.DataFrame()
-        if retrieval_mode in {"Semantic", "Hybrid"}:
-            from src.embeddings import load_embedding_model
-
-            model = load_embedding_model(str(index_model_path), index_model_name)
-            query_embedding = model.encode_queries([search_text])
-            semantic_results = query_similar_claims(
-                collection,
-                query_embedding,
-                filters=filters,
-                top_n=candidate_pool,
-                candidate_multiplier=1,
-                exclude_claim_id=source_claim_id,
-            )
-
-        bm25_results = pd.DataFrame()
-        if retrieval_mode in {"BM25", "Hybrid"} and keyword_algorithm == "BM25":
-            bm25_results = query_bm25_candidates(
-                claims_frame,
-                search_text,
-                filters=filters,
-                candidate_pool=candidate_pool,
-                exclude_claim_id=source_claim_id,
-            )
-
-        results = merge_search_candidates(
-            semantic_results,
-            bm25_results,
-            retrieval_mode=retrieval_mode,
-            semantic_weight=semantic_weight,
+        results = query_similar_claims(
+            session,
+            table_name,
+            selected_model.key,
+            search_text,
+            metric_key=selected_metric.key,
+            filters=filters,
+            top_n=top_n,
+            exclude_claim_id=source_claim_id,
         )
-        if reranker_model is not None and not results.empty:
-            from src.embeddings import load_reranker_model
-
-            rerank_candidates = results.head(rerank_top_k)
-            reranker = load_reranker_model(str(reranker_model.model_dir), reranker_model.repo_id)
-            rerank_scores = reranker.predict(search_text, rerank_candidates["document"].fillna("").astype(str).tolist())
-            results = apply_rerank_scores(rerank_candidates, rerank_scores)
-
-        results = results.head(top_n)
     except Exception as exc:
         st.error(f"Search failed: {exc}")
         return
@@ -146,50 +103,15 @@ def render_search_page(
         st.warning("No matching claims found for the selected filters.")
         return
 
-    render_result_cards(results, search_text, filters)
+    render_result_cards(results, search_text, filters, selected_metric)
 
 
-def render_search_controls() -> tuple[int, str, str, float, int, RerankerModelConfig | None, int]:
-    reranker_models = available_reranker_models()
-    reranker_by_key = {model.key: model for model in reranker_models}
-    top, keyword, rerank, results = st.columns(4)
-    with top:
-        retrieval_mode = st.selectbox("Retrieval mode", ["Semantic", "BM25", "Hybrid"], index=0)
-    with keyword:
-        keyword_algorithm = st.selectbox("Keyword search algorithm", ["BM25"], index=0)
-    with rerank:
-        rerank_options = ["Off"] + [model.key for model in reranker_models]
-        rerank_mode = st.selectbox(
-            "Rerank model",
-            rerank_options,
-            index=0,
-            format_func=lambda key: "Off" if key == "Off" else reranker_by_key[key].label,
-        )
-    with results:
-        top_n = st.slider("Top results", min_value=5, max_value=50, value=10, step=5)
-
-    left, middle, right = st.columns(3)
-    with left:
-        candidate_pool = st.slider("Candidate pool", min_value=50, max_value=300, value=100, step=25)
-    with middle:
-        semantic_weight = 1.0
-        if retrieval_mode == "Hybrid":
-            semantic_weight = st.slider("Semantic weight", min_value=0.0, max_value=1.0, value=0.7, step=0.05)
-    with right:
-        rerank_top_k = min(50, candidate_pool)
-        if rerank_mode != "Off":
-            rerank_top_k = st.slider(
-                "Rerank top-K",
-                min_value=top_n,
-                max_value=candidate_pool,
-                value=min(max(50, top_n), candidate_pool),
-                step=5,
-            )
-    reranker_model = None if rerank_mode == "Off" else reranker_by_key[rerank_mode]
-    return top_n, retrieval_mode, keyword_algorithm, semantic_weight, candidate_pool, reranker_model, rerank_top_k
-
-
-def render_result_cards(results: pd.DataFrame, query_text: str, filters: SearchFilters) -> None:
+def render_result_cards(
+    results: pd.DataFrame,
+    query_text: str,
+    filters: SearchFilters,
+    metric: SimilarityMetric,
+) -> None:
     inject_result_card_css()
     filter_count = active_filter_count(filters)
     st.markdown(
@@ -202,7 +124,7 @@ def render_result_cards(results: pd.DataFrame, query_text: str, filters: SearchF
             <div class="claim-results-toolbar">
                 <div class="claim-query-box">{escape(query_text)}</div>
                 <div class="claim-toolbar-pill">Filters <span>{filter_count}</span></div>
-                <div class="claim-toolbar-pill">Sort by: Match score</div>
+                <div class="claim-toolbar-pill">Sort by: {escape(metric.label)}</div>
             </div>
             <div class="claim-result-count">{len(results)} results found</div>
         </div>
@@ -210,15 +132,16 @@ def render_result_cards(results: pd.DataFrame, query_text: str, filters: SearchF
         unsafe_allow_html=True,
     )
     for rank, (_, row) in enumerate(results.iterrows(), start=1):
-        st.markdown(result_card_html(rank, row), unsafe_allow_html=True)
+        st.markdown(result_card_html(rank, row, metric), unsafe_allow_html=True)
 
 
-def result_card_html(rank: int, row: pd.Series) -> str:
+def result_card_html(rank: int, row: pd.Series, metric: SimilarityMetric) -> str:
     claim_id = escape(clean_text(row.get("claim_id") or row.get("id")))
     description = escape(result_description(row))
-    score = score_float(row.get("final_score", row.get("similarity", 0)))
+    score = score_float(row.get("metric_value"))
     score_text = format_score(score)
-    score_percent = max(0.0, min(score, 1.0)) * 100
+    score_bar = metric_score_bar(score, metric)
+    score_row_class = "claim-score-row" if score_bar else "claim-score-row claim-score-row-raw"
     chips = "".join(result_chip_html(row, field, label, status=(field == "claim_status")) for label, field in [
         ("Line", "line_of_business"),
         ("Type", "claim_type"),
@@ -235,7 +158,7 @@ def result_card_html(rank: int, row: pd.Series) -> str:
     ])
     chips_html = f'<div class="claim-chip-row">{chips}</div>' if chips else ""
     tiles_html = f'<div class="claim-tile-row">{tiles}</div>' if tiles else ""
-    scores_html = score_details_html(row)
+    scores_html = score_details_html(row, metric)
     return f"""
     <div class="claim-result-card">
         <div class="claim-card-top">
@@ -244,11 +167,8 @@ def result_card_html(rank: int, row: pd.Series) -> str:
                 <span class="claim-id">{claim_id}</span>
             </div>
             <div class="claim-score-block">
-                <div class="claim-score-label">Match score</div>
-                <div class="claim-score-row">
-                    <span>{score_text}</span>
-                    <div class="claim-score-track"><div style="width: {score_percent:.0f}%"></div></div>
-                </div>
+                <div class="claim-score-label">{escape(metric.label)} · {metric.direction_label}</div>
+                <div class="{score_row_class}"><span>{score_text}</span>{score_bar}</div>
             </div>
         </div>
         <div class="claim-description">{description}</div>
@@ -277,8 +197,8 @@ def result_tile_html(row: pd.Series, field: str, label: str) -> str:
     return f'<div class="claim-tile"><span>{escape(label)}</span><strong>{value}</strong></div>'
 
 
-def score_details_html(row: pd.Series) -> str:
-    items = result_score_items(row)
+def score_details_html(row: pd.Series, metric: SimilarityMetric) -> str:
+    items = result_score_items(row, metric)
     if not items:
         return ""
     cells = "".join(
@@ -408,6 +328,9 @@ def inject_result_card_css() -> None:
             color: #16a34a;
             font-size: 1.05rem;
             font-weight: 800;
+        }
+        .claim-score-row-raw {
+            grid-template-columns: 1fr;
         }
         .claim-score-track {
             height: 8px;
@@ -552,28 +475,19 @@ def result_description(row: pd.Series) -> str:
     return document
 
 
-def result_score_items(row: pd.Series) -> list[tuple[str, str]]:
-    items = []
-    semantic_value = row.get("semantic_score")
-    similarity_value = row.get("similarity")
-    if positive_score(semantic_value):
-        items.append(("Semantic similarity", format_score(semantic_value)))
-    elif positive_score(similarity_value):
-        items.append(("Semantic similarity", format_score(similarity_value)))
-    if positive_score(row.get("bm25_score")):
-        items.append(("BM25 normalized", format_score(row.get("bm25_score"))))
-    if "rerank_score" in row and pd.notna(row.get("rerank_score")):
-        items.append(("Rerank", format_score(row.get("rerank_score"))))
-    if "distance" in row and pd.notna(row.get("distance")):
-        items.append(("Chroma distance", format_score(row.get("distance"))))
-    return items
+def result_score_items(row: pd.Series, metric: SimilarityMetric) -> list[tuple[str, str]]:
+    value = row.get("metric_value")
+    if pd.isna(value):
+        return []
+    return [(f"{metric.label} · {metric.direction_label}", format_score(value))]
 
 
-def positive_score(value: Any) -> bool:
-    try:
-        return pd.notna(value) and float(value) > 0
-    except (TypeError, ValueError):
-        return False
+def metric_score_bar(value: float, metric: SimilarityMetric) -> str:
+    if metric.bounded_range is None:
+        return ""
+    minimum, maximum = metric.bounded_range
+    percent = max(0.0, min((value - minimum) / (maximum - minimum), 1.0)) * 100
+    return f'<div class="claim-score-track"><div style="width: {percent:.0f}%"></div></div>'
 
 
 def active_filter_count(filters: SearchFilters) -> int:
@@ -620,13 +534,13 @@ def format_amount_html(row: pd.Series, field: str) -> str:
     return f"{prefix}{amount}"
 
 
-def existing_claim_selector(frame: pd.DataFrame) -> str | None:
+def existing_claim_selector(claims: list[dict[str, Any]]) -> str | None:
     label_by_id = {}
-    for _, row in frame.sort_values("claim_id").iterrows():
-        claim_id = clean_text(row.get("claim_id"))
+    for row in claims:
+        claim_id = clean_text(row.get("CLAIM_ID"))
         summary = " | ".join(
             clean_text(row.get(field))
-            for field in ["line_of_business", "claim_type", "country", "claim_status"]
+            for field in ["LINE_OF_BUSINESS", "CLAIM_TYPE", "COUNTRY", "CLAIM_STATUS"]
             if clean_text(row.get(field))
         )
         label_by_id[claim_id] = f"{claim_id} - {summary}" if summary else claim_id
@@ -640,20 +554,21 @@ def existing_claim_selector(frame: pd.DataFrame) -> str | None:
     return None
 
 
-def render_filters(frame: pd.DataFrame) -> SearchFilters:
+def render_filters(options: dict[str, Any]) -> SearchFilters:
     with st.sidebar:
         st.header("Filters")
         equality = {}
         for field in ["line_of_business", "claim_type", "cause_of_loss", "country", "claim_status", "policy_type"]:
-            if field in frame:
-                options = ["All"] + sorted(clean_text(value) for value in frame[field].dropna().unique() if clean_text(value))
-                value = st.selectbox(field.replace("_", " ").title(), options)
+            values = options["equality"].get(field, [])
+            if values:
+                choices = ["All"] + [clean_text(value) for value in values]
+                value = st.selectbox(field.replace("_", " ").title(), choices)
                 if value != "All":
                     equality[field] = value
 
-        loss_year_range = numeric_range(frame, "loss_year", "Loss year", integer=True)
-        reserve_range = numeric_range(frame, "reserve_amount", "Reserve amount")
-        paid_range = numeric_range(frame, "paid_amount", "Paid amount")
+        loss_year_range = numeric_range(options["ranges"].get("loss_year"), "Loss year", integer=True)
+        reserve_range = numeric_range(options["ranges"].get("reserve_amount"), "Reserve amount")
+        paid_range = numeric_range(options["ranges"].get("paid_amount"), "Paid amount")
 
     return SearchFilters(
         equality=equality,
@@ -664,19 +579,15 @@ def render_filters(frame: pd.DataFrame) -> SearchFilters:
 
 
 def numeric_range(
-    frame: pd.DataFrame,
-    column: str,
+    bounds: tuple[Any, Any] | None,
     label: str,
     *,
     integer: bool = False,
 ) -> tuple[int | float | None, int | float | None]:
-    if column not in frame:
+    if not bounds or bounds[0] is None or bounds[1] is None:
         return (None, None)
-    values = pd.to_numeric(frame[column], errors="coerce").dropna()
-    if values.empty:
-        return (None, None)
-    low = int(values.min()) if integer else float(values.min())
-    high = int(values.max()) if integer else float(values.max())
+    low = int(bounds[0]) if integer else float(bounds[0])
+    high = int(bounds[1]) if integer else float(bounds[1])
     if low == high:
         return (None, None)
     selected = st.slider(label, min_value=low, max_value=high, value=(low, high))

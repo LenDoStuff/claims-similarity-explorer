@@ -1,8 +1,8 @@
 # Claims Similarity Explorer
 
-Python + Streamlit MVP for local semantic search and exploratory clustering of insurance claims.
+Streamlit app for initializing and searching insurance-claim embeddings stored in Snowflake.
 
-Snowflake is the source for ingestion only, accessed with Snowpark Python. After indexing, the app reads claim documents, embeddings, and metadata from local persistent ChromaDB.
+Snowpark handles source loading, text preparation, Cortex embedding generation, table persistence, filtering, and vector similarity ranking. The app does not use local embedding models or a local vector database.
 
 ## Setup
 
@@ -12,20 +12,9 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-The public repository includes the smallest local embedding model and the local reranker:
-
-```text
-models/embeddings/multilingual-e5-small/
-models/rerankers/mmarco-mMiniLMv2-L12-H384-v1/
-```
-
-The app scans `models/embeddings/` and `models/rerankers/` at startup. Add another local model folder there and it appears in Streamlit without changing code. Model scanning does not load weights; weights are loaded only for indexing, search, or reranking. The app expects local Sentence Transformers models and does not call an external embedding or reranking API at runtime.
-
 ## Snowflake Connection
 
-The app connects with Snowpark using Snowflake's native local connection files. It does not read Snowflake credentials from the repo.
-
-On Windows, keep credentials in:
+The app uses Snowpark's default local Snowflake connection. Keep credentials outside the repository:
 
 ```toml
 # C:\Users\<username>\AppData\Local\Snowflake\connections.toml
@@ -39,20 +28,16 @@ schema = "CLAIMS_META"
 role = "..."
 ```
 
-Set the default connection in the Snowflake config file:
-
 ```toml
 # C:\Users\<username>\AppData\Local\Snowflake\config.toml
 default_connection_name = "myconnection"
 ```
 
-Snowpark creates sessions with:
+The role needs source-table `SELECT`, permission to create or replace the derived table, and either `SNOWFLAKE.CORTEX_EMBED_USER` or `SNOWFLAKE.CORTEX_USER`.
 
-```python
-Session.builder.create()
-```
+## Configuration
 
-The table and column mapping live in the tracked repo file `app_config.toml`:
+The source table and column mapping are configured in `app_config.toml`:
 
 ```toml
 [snowflake]
@@ -75,67 +60,36 @@ currency = "currency"
 policy_type = "policy_type"
 ```
 
-Only `claim_id` and `description` are required. Set any optional metadata mapping to an empty string to skip selecting, embedding, filtering, and rendering that field. `row_limit` is optional; when set, indexing uses `SAMPLE (N ROWS)` to load a random Snowflake subset instead of the full table.
+Every mapping key must be present. `claim_id` and `description` are required; set optional mappings to `""` to skip them. `row_limit` is optional.
 
-## Build the Local Index
+## Initialize Embeddings
 
-```powershell
-python scripts/build_chroma_index.py
-```
-
-This loads Snowflake rows, hashes the prepared records and selected model folder, then reuses an existing matching Chroma collection or builds a new versioned collection:
-
-- Loads selected columns from Snowflake through Snowpark Python, using `snowflake.row_limit` when configured.
-- Cleans claim text.
-- Builds event-focused embedding text.
-- Embeds with `models/embeddings/multilingual-e5-small/` by default.
-- Persists records to `chroma_db/`.
-- Writes the active per-model manifest, for example `artifacts/index_manifest_multilingual_e5_small.json`.
-
-To build the index with another local embedding model, place it under `models/embeddings/` and pass the folder name:
+Use the `Index Setup` tab or run:
 
 ```powershell
-python scripts/build_chroma_index.py --model-key multilingual-e5-base
-python scripts/build_chroma_index.py --model-key multilingual-e5-large
+python scripts/build_snowflake_embeddings.py --models voyage-multilingual-2 multilingual-e5-large
 ```
 
-Search uses the active manifest for the selected embedding model. If the same Snowflake rows and model fingerprint are indexed again, embedding is skipped and the existing Chroma collection is reused.
+Initialization:
 
-The same indexing flow is available in Streamlit on the `Index Setup` tab. Indexing only runs after clicking `Load or refresh index`; the app does not rebuild Chroma on startup.
+- Loads the source with `session.table()`.
+- Builds the embedding text with Snowpark expressions.
+- Calls Snowflake Cortex `AI_EMBED` for every selected model.
+- Creates or replaces `<SOURCE_TABLE>_EMBEDDINGS` in the source table's schema.
+- Stores one typed `VECTOR` column per selected model.
 
-## Build Clusters
+Running initialization again replaces the derived table and its previous model columns.
 
-```powershell
-python scripts/build_clusters.py --clusters 12
-```
-
-This reads embeddings from the active Chroma collection for the selected embedding model, assigns KMeans cluster IDs, updates Chroma metadata, and writes per-model cluster artifacts.
-
-## Run the App
+## Search
 
 ```powershell
 streamlit run app/streamlit_app.py
 ```
 
-Pages:
-
-- Index Setup
-- Similar Claims Search
-- Cluster Explorer
-- Data & Embedding Diagnostics
-
-The embedding model dropdown switches between local models with active hash-based manifests. The search page supports semantic, BM25, and hybrid retrieval modes, plus optional local cross-encoder reranking. The diagnostics page includes a local smoke-test button for the active embedding model.
+The search page lists only models present in the derived table. Queries are embedded with the selected model and can be ranked with cosine similarity, inner product, Manhattan distance, or Euclidean distance. Metadata filters, metric ordering, and limits are applied in Snowflake before final rows are converted to pandas for rendering.
 
 ## Tests
 
 ```powershell
 pytest
 ```
-
-## Notes
-
-- Claims with blank descriptions are excluded from semantic indexing and counted in diagnostics.
-- Claim ID, handler-like fields, payment amounts, reserve amounts, and statuses are metadata, not embedding text.
-- BM25 and cross-encoder reranking are local experiment options for comparing search setups.
-- Cross-encoder reranking may be slower on CPU.
-- KMeans clusters are exploratory and should not be treated as authoritative business classifications.
