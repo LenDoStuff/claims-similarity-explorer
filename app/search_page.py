@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from html import escape
 from typing import Any
 
@@ -9,35 +10,48 @@ import streamlit as st
 from src.config import EmbeddingModelConfig
 from src.similarity_search import (
     SIMILARITY_METRICS,
+    SIMILARITY_METRICS_BY_KEY,
     SearchFilters,
     SimilarityMetric,
     query_similar_claims,
 )
 from src.snowflake_io import get_claim_document
-from src.text_preprocessing import clean_text
+
+
+WHITESPACE_RE = re.compile(r"\s+")
+
+
+def clean_text(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return WHITESPACE_RE.sub(" ", str(value).replace("\x00", " ")).strip()
 
 
 def render_search_configuration(
     models: list[EmbeddingModelConfig],
-) -> tuple[EmbeddingModelConfig, SimilarityMetric]:
+) -> tuple[EmbeddingModelConfig, SimilarityMetric] | None:
     st.subheader("Search Configuration")
+    models_by_key = {model.key: model for model in models}
     model_column, metric_column = st.columns(2)
     with model_column:
         selected_model_key = st.selectbox(
             "Embedding model",
             options=[model.key for model in models],
-            format_func=lambda key: next(model.label for model in models if model.key == key),
+            index=None,
+            placeholder="Select an embedding model",
+            format_func=lambda key: models_by_key[key].label,
         )
     with metric_column:
         selected_metric_key = st.selectbox(
             "Similarity metric",
             options=[metric.key for metric in SIMILARITY_METRICS],
-            format_func=lambda key: next(metric.label for metric in SIMILARITY_METRICS if metric.key == key),
+            index=None,
+            placeholder="Select a similarity metric",
+            format_func=lambda key: SIMILARITY_METRICS_BY_KEY[key].label,
         )
-    return (
-        next(model for model in models if model.key == selected_model_key),
-        next(metric for metric in SIMILARITY_METRICS if metric.key == selected_metric_key),
-    )
+    if selected_model_key is None or selected_metric_key is None:
+        return None
+    return models_by_key[selected_model_key], SIMILARITY_METRICS_BY_KEY[selected_metric_key]
 
 
 def render_search_page(
@@ -136,7 +150,7 @@ def render_result_cards(
 
 
 def result_card_html(rank: int, row: pd.Series, metric: SimilarityMetric) -> str:
-    claim_id = escape(clean_text(row.get("claim_id") or row.get("id")))
+    claim_id = escape(clean_text(row.get("claim_id")))
     description = escape(result_description(row))
     score = score_float(row.get("metric_value"))
     score_text = format_score(score)

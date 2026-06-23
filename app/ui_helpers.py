@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.snowflake_io import create_snowflake_session
-
 
 @st.cache_resource
 def get_snowflake_session():
-    return create_snowflake_session()
+    from snowflake.snowpark import Session
+
+    return Session.builder.create()
 
 
 def inject_css() -> None:

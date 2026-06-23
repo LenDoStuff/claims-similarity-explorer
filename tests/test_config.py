@@ -6,9 +6,9 @@ from src.config import (
     AppConfig,
     COLUMN_MAPPING_FIELDS,
     ColumnConfig,
-    available_embedding_models,
+    EMBEDDING_MODELS,
+    EMBEDDING_MODELS_BY_COLUMN,
     embedding_column_for_model,
-    model_for_embedding_column,
 )
 
 
@@ -42,18 +42,16 @@ def full_columns(**overrides: str) -> ColumnConfig:
 
 
 def test_embedding_model_registry_contains_all_snowflake_text_models() -> None:
-    models = available_embedding_models()
-
-    assert len(models) == 8
-    assert "voyage-multilingual-2" in {model.key for model in models}
-    assert {model.dimensions for model in models} == {768, 1024}
+    assert len(EMBEDDING_MODELS) == 8
+    assert "voyage-multilingual-2" in {model.key for model in EMBEDDING_MODELS}
+    assert {model.dimensions for model in EMBEDDING_MODELS} == {768, 1024}
 
 
 def test_embedding_column_round_trip() -> None:
     column = embedding_column_for_model("voyage-multilingual-2")
 
     assert column == "EMBEDDING_VOYAGE_MULTILINGUAL_2"
-    assert model_for_embedding_column(column).key == "voyage-multilingual-2"
+    assert EMBEDDING_MODELS_BY_COLUMN[column].key == "voyage-multilingual-2"
 
 
 def test_embedding_table_uses_source_schema_and_suffix() -> None:
@@ -82,7 +80,7 @@ row_limit = 250
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.setattr("src.config.DEFAULT_APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr("src.config.APP_CONFIG_PATH", config_path)
 
     config = AppConfig.from_app_config()
 
@@ -105,7 +103,7 @@ description = "claim_description"
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.setattr("src.config.DEFAULT_APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr("src.config.APP_CONFIG_PATH", config_path)
 
     with pytest.raises(ValueError, match="Set optional mappings"):
         AppConfig.from_app_config()
@@ -124,7 +122,7 @@ schema = "PUBLIC"
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.setattr("src.config.DEFAULT_APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr("src.config.APP_CONFIG_PATH", config_path)
 
     with pytest.raises(ValueError, match="snowflake.schema"):
         AppConfig.from_app_config()

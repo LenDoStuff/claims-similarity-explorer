@@ -5,16 +5,14 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from src.config import AppConfig, DEFAULT_EMBEDDING_MODEL, available_embedding_models
-from src.indexing import initialize_embeddings
-from src.snowflake_io import get_embedding_table_status
+from src.config import AppConfig, EMBEDDING_MODELS
+from src.snowflake_io import get_embedding_table_status, initialize_embeddings
 
 
 def render_index_setup_page(session: Any, config: AppConfig) -> None:
     st.subheader("Index Setup")
     st.caption("Load claims with Snowpark, embed them with Snowflake Cortex, and save vectors in Snowflake.")
 
-    models = available_embedding_models()
     st.markdown("**Snowflake embedding models**")
     st.dataframe(
         pd.DataFrame(
@@ -24,7 +22,7 @@ def render_index_setup_page(session: Any, config: AppConfig) -> None:
                     "dimensions": model.dimensions,
                     "language": model.language,
                 }
-                for model in models
+                for model in EMBEDDING_MODELS
             ]
         ),
         use_container_width=True,
@@ -48,8 +46,7 @@ def render_index_setup_page(session: Any, config: AppConfig) -> None:
 
     selected_models = st.multiselect(
         "Embedding models",
-        options=[model.key for model in models],
-        default=[DEFAULT_EMBEDDING_MODEL],
+        options=[model.key for model in EMBEDDING_MODELS],
     )
     render_embedding_table_status(session, config)
 
@@ -89,10 +86,7 @@ def render_embedding_table_status(session: Any, config: AppConfig) -> None:
         st.warning(f"Could not inspect `{config.embedding_table}`: {exc}")
         return
     if status is None:
-        st.info(
-            "No accessible Snowflake embedding table exists yet. "
-            "If it already exists, verify that the active role can access it."
-        )
+        st.info("No Snowflake embedding table exists yet.")
         return
     st.json(
         {

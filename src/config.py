@@ -8,8 +8,7 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_APP_CONFIG_PATH = PROJECT_ROOT / "app_config.toml"
-DEFAULT_EMBEDDING_MODEL = "voyage-multilingual-2"
+APP_CONFIG_PATH = PROJECT_ROOT / "app_config.toml"
 APP_CONFIG_SECTIONS = {"snowflake", "columns"}
 SNOWFLAKE_CONFIG_KEYS = {"table", "row_limit"}
 
@@ -38,7 +37,7 @@ class EmbeddingModelConfig:
     language: str
 
 
-EMBEDDING_MODELS = [
+EMBEDDING_MODELS = (
     EmbeddingModelConfig("snowflake-arctic-embed-l-v2.0", "Snowflake Arctic Embed L v2.0", 1024, "Multilingual"),
     EmbeddingModelConfig("snowflake-arctic-embed-l-v2.0-8k", "Snowflake Arctic Embed L v2.0 8K", 1024, "Multilingual"),
     EmbeddingModelConfig("nv-embed-qa-4", "NV Embed QA 4", 1024, "English"),
@@ -47,7 +46,8 @@ EMBEDDING_MODELS = [
     EmbeddingModelConfig("snowflake-arctic-embed-m-v1.5", "Snowflake Arctic Embed M v1.5", 768, "English"),
     EmbeddingModelConfig("snowflake-arctic-embed-m", "Snowflake Arctic Embed M", 768, "English"),
     EmbeddingModelConfig("e5-base-v2", "E5 Base v2", 768, "English"),
-]
+)
+EMBEDDING_MODELS_BY_KEY = {model.key: model for model in EMBEDDING_MODELS}
 
 
 @dataclass(frozen=True)
@@ -121,14 +121,14 @@ class ColumnConfig:
 @dataclass(frozen=True)
 class AppConfig:
     columns: ColumnConfig
-    snowflake_table: str = ""
+    snowflake_table: str
     snowflake_row_limit: int | None = None
 
     @classmethod
     def from_app_config(cls) -> "AppConfig":
-        if not DEFAULT_APP_CONFIG_PATH.exists():
-            raise RuntimeError(f"App config file was not found: {DEFAULT_APP_CONFIG_PATH}")
-        with DEFAULT_APP_CONFIG_PATH.open("rb") as file:
+        if not APP_CONFIG_PATH.exists():
+            raise RuntimeError(f"App config file was not found: {APP_CONFIG_PATH}")
+        with APP_CONFIG_PATH.open("rb") as file:
             app_data = tomllib.load(file)
         unknown_sections = sorted(set(app_data) - APP_CONFIG_SECTIONS)
         if unknown_sections:
@@ -172,31 +172,14 @@ class AppConfig:
         return f"{prefix}{separator}{table}"
 
 
-def available_embedding_models() -> list[EmbeddingModelConfig]:
-    return EMBEDDING_MODELS.copy()
-
-
-def get_embedding_model(key: str) -> EmbeddingModelConfig:
-    for model in EMBEDDING_MODELS:
-        if model.key == key:
-            return model
-    raise ValueError(f"Unknown Snowflake embedding model: {key}")
-
-
 def embedding_column_for_model(model_key: str) -> str:
-    get_embedding_model(model_key)
+    if model_key not in EMBEDDING_MODELS_BY_KEY:
+        raise ValueError(f"Unknown Snowflake embedding model: {model_key}")
     suffix = re.sub(r"[^0-9A-Za-z]+", "_", model_key).strip("_").upper()
     return f"EMBEDDING_{suffix}"
 
 
-def model_for_embedding_column(column_name: str) -> EmbeddingModelConfig | None:
-    normalized = column_name.strip('"').upper()
-    return next(
-        (model for model in EMBEDDING_MODELS if embedding_column_for_model(model.key) == normalized),
-        None,
-    )
-
-
-def quote_identifier(identifier: str) -> str:
-    escaped = identifier.replace('"', '""')
-    return f'"{escaped}"'
+EMBEDDING_MODELS_BY_COLUMN = {
+    embedding_column_for_model(model.key): model
+    for model in EMBEDDING_MODELS
+}

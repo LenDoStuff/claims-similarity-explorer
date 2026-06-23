@@ -14,13 +14,14 @@ def main() -> None:
     args = parse_args()
 
     from src.config import AppConfig
-    from src.indexing import initialize_embeddings
-    from src.snowflake_io import create_snowflake_session
+    from snowflake.snowpark import Session
+
+    from src.snowflake_io import initialize_embeddings
 
     config = AppConfig.from_app_config()
-    session = create_snowflake_session()
+    session = Session.builder.create()
     try:
-        result = initialize_embeddings(session, config, args.models, limit=args.limit)
+        result = initialize_embeddings(session, config, args.models)
     finally:
         session.close()
     print(f"Embedding table: {result.table_name}")
@@ -33,10 +34,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["voyage-multilingual-2"],
+        required=True,
         help="Snowflake AI_EMBED text model names.",
     )
-    parser.add_argument("--limit", type=int, default=None, help="Optional row limit overriding app_config.toml.")
     return parser.parse_args()
 
 

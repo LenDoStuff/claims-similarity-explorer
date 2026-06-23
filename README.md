@@ -2,7 +2,7 @@
 
 Streamlit app for initializing and searching insurance-claim embeddings stored in Snowflake.
 
-Snowpark handles source loading, text preparation, Cortex embedding generation, table persistence, filtering, and vector similarity ranking. The app does not use local embedding models or a local vector database.
+Snowpark handles source loading, text preparation, Cortex embedding generation, table persistence, filtering, and vector similarity ranking.
 
 ## Setup
 
@@ -79,6 +79,7 @@ Initialization:
 - Stores one typed `VECTOR` column per selected model.
 
 Running initialization again replaces the derived table and its previous model columns.
+The CLI requires an explicit model list; the Streamlit multiselect starts empty.
 
 ## Search
 

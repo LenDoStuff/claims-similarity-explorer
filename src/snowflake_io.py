@@ -5,11 +5,10 @@ from typing import Any
 
 from src.config import (
     AppConfig,
+    EMBEDDING_MODELS_BY_COLUMN,
+    EMBEDDING_MODELS_BY_KEY,
     EmbeddingModelConfig,
     embedding_column_for_model,
-    get_embedding_model,
-    model_for_embedding_column,
-    quote_identifier,
 )
 
 
@@ -46,12 +45,6 @@ class EmbeddingTableStatus:
     models: list[EmbeddingModelConfig]
 
 
-def create_snowflake_session() -> Any:
-    from snowflake.snowpark import Session
-
-    return Session.builder.create()
-
-
 def validate_configured_columns(schema_names: list[str], config: AppConfig) -> None:
     missing = [column for column in config.columns.selected_columns if column not in schema_names]
     if missing:
@@ -68,7 +61,7 @@ def clean_text_column(column: Any) -> Any:
     return trim(regexp_replace(coalesce(column.cast("string"), lit("")), lit(r"\s+"), lit(" ")))
 
 
-def prepare_claims_frame(session: Any, config: AppConfig, *, limit: int | None = None) -> Any:
+def prepare_claims_frame(session: Any, config: AppConfig) -> Any:
     from snowflake.snowpark.functions import (
         array_construct_compact,
         array_to_string,
@@ -82,20 +75,18 @@ def prepare_claims_frame(session: Any, config: AppConfig, *, limit: int | None =
     )
 
     config.validate_source()
-    row_limit = limit if limit is not None else config.snowflake_row_limit
-    if row_limit is not None and row_limit <= 0:
-        raise ValueError("snowflake.row_limit must be a positive integer when set")
 
     frame = session.table(config.snowflake_table)
     validate_configured_columns(list(frame.schema.names), config)
-    if row_limit is not None:
-        frame = frame.sample(n=int(row_limit))
+    if config.snowflake_row_limit is not None:
+        frame = frame.sample(n=config.snowflake_row_limit)
 
-    source = {
-        attr: col(quote_identifier(getattr(config.columns, attr)))
-        for attr in CANONICAL_COLUMNS
-        if getattr(config.columns, attr)
-    }
+    source = {}
+    for attr in CANONICAL_COLUMNS:
+        name = getattr(config.columns, attr)
+        if name:
+            escaped_name = name.replace('"', '""')
+            source[attr] = col(f'"{escaped_name}"')
     claim_id = clean_text_column(source["claim_id"])
     description = clean_text_column(source["description"])
     frame = frame.filter((length(claim_id) > 0) & (length(description) > 0))
@@ -130,27 +121,12 @@ def prepare_claims_frame(session: Any, config: AppConfig, *, limit: int | None =
     return frame.select(*selected)
 
 
-def add_embedding_columns(frame: Any, model_keys: list[str]) -> Any:
-    from snowflake.snowpark.functions import ai_embed, col
-
-    if not model_keys:
-        raise ValueError("Select at least one embedding model.")
-    result = frame
-    for model_key in model_keys:
-        get_embedding_model(model_key)
-        result = result.with_column(
-            embedding_column_for_model(model_key),
-            ai_embed(model_key, col("DOCUMENT")),
-        )
-    return result
-
-
 def initialized_models(frame: Any) -> list[EmbeddingModelConfig]:
     from snowflake.snowpark.types import VectorType
 
     models = []
     for field in frame.schema.fields:
-        model = model_for_embedding_column(field.name)
+        model = EMBEDDING_MODELS_BY_COLUMN.get(field.name.strip('"').upper())
         if model is not None and isinstance(field.datatype, VectorType):
             models.append(model)
     return models
@@ -164,10 +140,44 @@ def get_embedding_table_status(session: Any, config: AppConfig) -> EmbeddingTabl
         models = initialized_models(frame)
         row_count = frame.count()
     except SnowparkSQLException as exc:
-        if "does not exist" in str(exc).lower() or "not exist" in str(exc).lower():
+        if exc.sql_error_code == 2003:
             return None
         raise
     return EmbeddingTableStatus(config.embedding_table, row_count, models)
+
+
+@dataclass(frozen=True)
+class IndexBuildResult:
+    table_name: str
+    row_count: int
+    models: list[str]
+
+
+def initialize_embeddings(
+    session: Any,
+    config: AppConfig,
+    model_keys: list[str],
+) -> IndexBuildResult:
+    from snowflake.snowpark.functions import ai_embed, col
+
+    if not model_keys:
+        raise ValueError("Select at least one embedding model.")
+
+    frame = prepare_claims_frame(session, config)
+    row_count = frame.count()
+    if row_count == 0:
+        raise RuntimeError("No claims with non-empty claim IDs and descriptions were available to index.")
+
+    for model_key in model_keys:
+        if model_key not in EMBEDDING_MODELS_BY_KEY:
+            raise ValueError(f"Unknown Snowflake embedding model: {model_key}")
+        frame = frame.with_column(
+            embedding_column_for_model(model_key),
+            ai_embed(model_key, col("DOCUMENT")),
+        )
+
+    frame.write.mode("overwrite").save_as_table(config.embedding_table)
+    return IndexBuildResult(config.embedding_table, row_count, model_keys)
 
 
 def collect_search_options(session: Any, table_name: str) -> dict[str, Any]:

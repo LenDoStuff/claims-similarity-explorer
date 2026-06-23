@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
 
 import streamlit as st
 
@@ -25,15 +24,15 @@ st.set_page_config(
 )
 
 
-def main(config: AppConfig | None = None, session: Any | None = None) -> None:
+def main() -> None:
     inject_css()
-    config = config or AppConfig.from_app_config()
+    config = AppConfig.from_app_config()
 
     st.title("Claims Similarity Explorer")
     st.caption("Build and search Snowflake-hosted claim embeddings with Snowpark.")
 
     try:
-        session = session or get_snowflake_session()
+        session = get_snowflake_session()
     except Exception as exc:
         st.error(f"Snowflake connection failed: {exc}")
         return
@@ -49,12 +48,13 @@ def main(config: AppConfig | None = None, session: Any | None = None) -> None:
             st.error(f"Could not inspect the Snowflake embedding table: {exc}")
             return
         if status is None or not status.models:
-            st.info(
-                "Open Index Setup and initialize at least one Snowflake embedding model. "
-                "If the table already exists, verify that the active role can access it."
-            )
+            st.info("Open Index Setup and initialize at least one Snowflake embedding model.")
             return
-        selected_model, selected_metric = render_search_configuration(status.models)
+        search_configuration = render_search_configuration(status.models)
+        if search_configuration is None:
+            st.info("Select an embedding model and similarity metric.")
+            return
+        selected_model, selected_metric = search_configuration
         try:
             options = collect_search_options(session, status.table_name)
         except Exception as exc:

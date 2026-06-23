@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from src.config import embedding_column_for_model, get_embedding_model
+from src.config import EMBEDDING_MODELS_BY_KEY, embedding_column_for_model
 
 
 EQUALITY_FILTER_FIELDS = [
@@ -31,12 +31,13 @@ class SimilarityMetric:
         return "Higher is better" if self.descending else "Lower is better"
 
 
-SIMILARITY_METRICS = [
+SIMILARITY_METRICS = (
     SimilarityMetric("cosine", "Cosine similarity", "VECTOR_COSINE_SIMILARITY", True, (-1.0, 1.0)),
     SimilarityMetric("inner_product", "Inner product", "VECTOR_INNER_PRODUCT", True),
     SimilarityMetric("l1", "Manhattan distance", "VECTOR_L1_DISTANCE", False),
     SimilarityMetric("l2", "Euclidean distance", "VECTOR_L2_DISTANCE", False),
-]
+)
+SIMILARITY_METRICS_BY_KEY = {metric.key: metric for metric in SIMILARITY_METRICS}
 
 
 @dataclass(frozen=True)
@@ -60,8 +61,12 @@ def query_similar_claims(
 ) -> pd.DataFrame:
     from snowflake.snowpark.functions import ai_embed, call_builtin, col, lit
 
-    get_embedding_model(model_key)
-    metric = get_similarity_metric(metric_key)
+    if model_key not in EMBEDDING_MODELS_BY_KEY:
+        raise ValueError(f"Unknown Snowflake embedding model: {model_key}")
+    try:
+        metric = SIMILARITY_METRICS_BY_KEY[metric_key]
+    except KeyError as exc:
+        raise ValueError(f"Unknown similarity metric: {metric_key}") from exc
     frame = session.table(table_name)
 
     for field in EQUALITY_FILTER_FIELDS:
@@ -130,10 +135,3 @@ def apply_range(frame: Any, column: str, bounds: tuple[int | float | None, int |
     if upper is not None:
         frame = frame.filter(col(column) <= lit(upper))
     return frame
-
-
-def get_similarity_metric(key: str) -> SimilarityMetric:
-    for metric in SIMILARITY_METRICS:
-        if metric.key == key:
-            return metric
-    raise ValueError(f"Unknown similarity metric: {key}")
