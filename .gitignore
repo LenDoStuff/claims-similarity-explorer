@@ -10,18 +10,6 @@ env/
 .env
 .env.*
 
-chroma_db/
-artifacts/*
-!artifacts/.gitkeep
 logs/
-
-models/embeddings/*
-!models/embeddings/multilingual-e5-small/
-!models/embeddings/multilingual-e5-small/**
-models/rerankers/*
-!models/rerankers/mmarco-mMiniLMv2-L12-H384-v1/
-!models/rerankers/mmarco-mMiniLMv2-L12-H384-v1/**
-models/rerankers/**/pytorch_model.bin
-models/**/.cache/
 
 .streamlit/secrets.toml

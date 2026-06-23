@@ -4,58 +4,83 @@ import pytest
 
 from src.config import (
     AppConfig,
+    COLUMN_MAPPING_FIELDS,
     ColumnConfig,
-    discover_embedding_models,
-    discover_reranker_models,
-    model_storage_key,
-    versioned_collection_name,
+    EMBEDDING_MODELS,
+    EMBEDDING_MODELS_BY_COLUMN,
+    embedding_column_for_model,
 )
 
 
-def test_model_storage_key_replaces_hyphens() -> None:
-    assert model_storage_key("multilingual-e5-small") == "multilingual_e5_small"
+def full_column_mapping(**overrides: str) -> dict[str, str]:
+    values = {
+        "claim_id": "claim_id",
+        "description": "claim_description",
+        "line_of_business": "line_of_business",
+        "claim_type": "claim_type",
+        "cause_of_loss": "cause_of_loss",
+        "damaged_object": "damaged_object",
+        "country": "country",
+        "claim_status": "claim_status",
+        "loss_date": "loss_date",
+        "reserve_amount": "reserve_amount",
+        "paid_amount": "paid_amount",
+        "currency": "currency",
+        "policy_type": "policy_type",
+    }
+    values.update(overrides)
+    return values
 
 
-def test_model_specific_collection_and_artifact_names() -> None:
-    config = AppConfig()
+def columns_toml(**overrides: str) -> str:
+    values = full_column_mapping(**overrides)
+    return "\n".join(f'{key} = "{values[key]}"' for _, key, _, _ in COLUMN_MAPPING_FIELDS)
 
-    assert versioned_collection_name("claims", "multilingual-e5-base", "abcdef1234567890") == "claims_multilingual_e5_base_abcdef123456"
-    assert config.index_manifest_path_for_model("multilingual-e5-small").name == "index_manifest_multilingual_e5_small.json"
-    assert config.clusters_path_for_model("multilingual-e5-small").name == "clusters_multilingual_e5_small.json"
-    assert config.cluster_map_path_for_model("multilingual-e5-small").name == "cluster_map_multilingual_e5_small.json"
+
+def full_columns(**overrides: str) -> ColumnConfig:
+    return ColumnConfig.from_mapping(full_column_mapping(**overrides))
+
+
+def test_embedding_model_registry_contains_all_snowflake_text_models() -> None:
+    assert len(EMBEDDING_MODELS) == 8
+    assert "voyage-multilingual-2" in {model.key for model in EMBEDDING_MODELS}
+    assert {model.dimensions for model in EMBEDDING_MODELS} == {768, 1024}
+
+
+def test_embedding_column_round_trip() -> None:
+    column = embedding_column_for_model("voyage-multilingual-2")
+
+    assert column == "EMBEDDING_VOYAGE_MULTILINGUAL_2"
+    assert EMBEDDING_MODELS_BY_COLUMN[column].key == "voyage-multilingual-2"
+
+
+def test_embedding_table_uses_source_schema_and_suffix() -> None:
+    assert AppConfig(columns=full_columns(), snowflake_table="DB.SCHEMA.CLAIMS").embedding_table == "DB.SCHEMA.CLAIMS_EMBEDDINGS"
+    assert AppConfig(columns=full_columns(), snowflake_table='"DB"."SCHEMA"."Claims"').embedding_table == '"DB"."SCHEMA"."Claims_EMBEDDINGS"'
 
 
 def test_column_config_allows_blank_optional_mappings() -> None:
-    columns = ColumnConfig.from_mapping(
-        {
-            "line_of_business": "",
-            "claim_type": "",
-        }
-    )
+    columns = full_columns(line_of_business="", claim_type="")
 
-    assert "line_of_business" not in columns.selected_columns
-    assert "claim_type" not in columns.selected_columns
     assert columns.selected_columns[:2] == ["claim_id", "claim_description"]
-    assert columns.embedding_columns == ["claim_description", "cause_of_loss", "damaged_object", "country"]
+    assert "line_of_business" not in columns.selected_columns
     assert any(row["source_column"] == "(skipped)" for row in columns.mapping_rows())
 
 
 def test_app_config_reads_table_and_columns(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "app_config.toml"
     config_path.write_text(
-        """
+        f"""
 [snowflake]
 table = "CLAIMS"
 row_limit = 250
 
 [columns]
-claim_id = "ID"
-description = "TEXT"
-line_of_business = ""
+{columns_toml(claim_id="ID", description="TEXT", line_of_business="")}
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.setattr("src.config.DEFAULT_APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr("src.config.APP_CONFIG_PATH", config_path)
 
     config = AppConfig.from_app_config()
 
@@ -63,24 +88,14 @@ line_of_business = ""
     assert config.snowflake_row_limit == 250
     assert config.columns.claim_id == "ID"
     assert config.columns.description == "TEXT"
-    assert config.columns.line_of_business == ""
-    assert "line_of_business" not in config.columns.selected_columns
 
 
-def test_column_config_rejects_blank_required_mappings() -> None:
-    with pytest.raises(ValueError, match="columns.claim_id"):
-        ColumnConfig(claim_id="").validate_required()
-
-    with pytest.raises(ValueError, match="columns.description"):
-        ColumnConfig(description="").validate_required()
-
-
-def test_app_config_requires_table(monkeypatch, tmp_path) -> None:
+def test_app_config_rejects_missing_optional_mappings(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "app_config.toml"
     config_path.write_text(
         """
 [snowflake]
-table = ""
+table = "CLAIMS"
 
 [columns]
 claim_id = "claim_id"
@@ -88,78 +103,35 @@ description = "claim_description"
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.setattr("src.config.DEFAULT_APP_CONFIG_PATH", config_path)
+    monkeypatch.setattr("src.config.APP_CONFIG_PATH", config_path)
 
-    config = AppConfig.from_app_config()
+    with pytest.raises(ValueError, match="Set optional mappings"):
+        AppConfig.from_app_config()
 
+
+def test_app_config_rejects_unknown_values(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "app_config.toml"
+    config_path.write_text(
+        f"""
+[snowflake]
+table = "CLAIMS"
+schema = "PUBLIC"
+
+[columns]
+{columns_toml()}
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("src.config.APP_CONFIG_PATH", config_path)
+
+    with pytest.raises(ValueError, match="snowflake.schema"):
+        AppConfig.from_app_config()
+
+
+def test_config_validation_requires_source_and_required_columns() -> None:
     with pytest.raises(ValueError, match="snowflake.table"):
-        config.validate_source()
-
-
-def test_app_config_requires_required_columns(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "app_config.toml"
-    config_path.write_text(
-        """
-[snowflake]
-table = "CLAIMS"
-
-[columns]
-claim_id = ""
-description = "claim_description"
-""".strip(),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr("src.config.DEFAULT_APP_CONFIG_PATH", config_path)
-
-    config = AppConfig.from_app_config()
-
+        AppConfig(columns=full_columns(), snowflake_table="").validate_source()
     with pytest.raises(ValueError, match="columns.claim_id"):
-        config.validate_source()
-
-
-def test_app_config_rejects_non_positive_row_limit(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "app_config.toml"
-    config_path.write_text(
-        """
-[snowflake]
-table = "CLAIMS"
-row_limit = 0
-
-[columns]
-claim_id = "claim_id"
-description = "claim_description"
-""".strip(),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr("src.config.DEFAULT_APP_CONFIG_PATH", config_path)
-
-    config = AppConfig.from_app_config()
-
+        AppConfig(columns=full_columns(claim_id=""), snowflake_table="CLAIMS").validate_source()
     with pytest.raises(ValueError, match="snowflake.row_limit"):
-        config.validate_source()
-
-
-def test_model_scanners_find_typed_subfolders(tmp_path) -> None:
-    embedding_root = tmp_path / "embeddings"
-    reranker_root = tmp_path / "rerankers"
-    (embedding_root / "custom-embedding").mkdir(parents=True)
-    (reranker_root / "custom-reranker").mkdir(parents=True)
-
-    embedding_models = discover_embedding_models(embedding_root)
-    reranker_models = discover_reranker_models(reranker_root)
-
-    assert [model.key for model in embedding_models] == ["custom-embedding"]
-    assert embedding_models[0].label == "Custom Embedding"
-    assert [model.key for model in reranker_models] == ["custom-reranker"]
-    assert reranker_models[0].label == "Custom Reranker"
-
-
-def test_model_scanners_sort_typed_subfolders(tmp_path) -> None:
-    embedding_root = tmp_path / "embeddings"
-    reranker_root = tmp_path / "rerankers"
-    (embedding_root / "embedding-b").mkdir(parents=True)
-    (embedding_root / "embedding-a").mkdir(parents=True)
-    (reranker_root / "reranker-a").mkdir(parents=True)
-
-    assert [model.key for model in discover_embedding_models(embedding_root)] == ["embedding-a", "embedding-b"]
-    assert [model.key for model in discover_reranker_models(reranker_root)] == ["reranker-a"]
+        AppConfig(columns=full_columns(), snowflake_table="CLAIMS", snowflake_row_limit=0).validate_source()
